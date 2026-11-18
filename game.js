@@ -15,6 +15,7 @@
   const MUTE_KEY = 'nvb-muted';
 
   // '1' = 50pts hp1 cyan, '2' = 100pts hp2 pink, '3' = 150pts hp3 amber, '.' = empty
+  // 'E' = 300pts hp5 elite violet (backlog #20: armored elite rows)
   const LEVELS = [
     [
       '111111111111',
@@ -40,9 +41,9 @@
       '333333333333',
       '111111111111',
     ],
-    // Level 4 — STARFORGE: a heavy armored frame around a soft core.
+    // Level 4 — STARFORGE: an elite armored row (#20) over a soft core.
     [
-      '333333333333',
+      'EEEEEEEEEEEE',
       '2..........2',
       '211111111112',
       '212222222212',
@@ -66,7 +67,7 @@
     [
       '333333333333',
       '222222222222',
-      '233333333332',
+      'E3333333333E',
       '231111111132',
       '231233332132',
       '231111111132',
@@ -87,8 +88,26 @@
     'Rings within rings — the pull grows stronger.',
     'The final wall. Break the Core, break the void.',
   ];
-  const BRICK_COLORS = { 1: '#00f0ff', 2: '#ff2d95', 3: '#ffb300' };
-  const BRICK_SCORE = { 1: 50, 2: 100, 3: 150 };
+  const BRICK_COLORS = { 1: '#00f0ff', 2: '#ff2d95', 3: '#ffb300', 5: '#e040fb' };
+  const BRICK_SCORE = { 1: 50, 2: 100, 3: 150, 5: 300 };
+  // #20: elite bricks are armored (hp 5) and worth 300; they also drop
+  // powerups twice as often as normal bricks.
+  const ELITE_HP = 5;
+  const ELITE_DROP_CHANCE = 0.25;
+
+  // ---------- Mini-boss: the Void Core (backlog #24) ----------
+  // At the end of level 5, once every normal brick is broken, the Void
+  // Core awakens — one big brick (240x40) with 12 HP and a 1500-point
+  // bounty. The level only clears when the Core is destroyed, so the
+  // boss is the final gate of the level, not a brick you can skip past.
+  // It sits at the top of a cleared field, pulses violet, and carries
+  // its own HP bar above it (plus a top-of-screen boss bar).
+  const BOSS_LEVEL = 5;
+  const BOSS_HP = 12;
+  const BOSS_W = 240, BOSS_H = 40;
+  const BOSS_SCORE = 1500;
+  const BOSS_COLOR = '#ff4d6d';
+  const BOSS_NAME = 'VOID CORE';
 
   // ---------- Void wells (backlog #14, #15, #17) ----------
   // The signature mechanic: black holes that bend the ball's trajectory
@@ -191,6 +210,9 @@
   let balls = [];      // active balls (multi-ball can grow this to 5)
   let powerups = [];   // falling capsules {x, y, type, vy}
   let wells = [];      // active void wells for this level (#14, #15, #17)
+  let boss = null;     // the live Void Core brick, once awakened (#24)
+  let bossSpawned = false; // the Core woke this level (once per level)
+  let fireAnnounced = false; // #31: 'ON FIRE!' shown once per hot streak
   let launchGrace = 0; // seconds after a launch during which wells can't
   // touch the ball — without this, a ball swallowed by the well respawns
   // on a paddle parked under the well and feeds itself straight back in.
@@ -621,14 +643,34 @@
       for (let c = 0; c < cols; c++) {
         const ch = map[r][c];
         if (ch === '.' || ch === undefined) continue;
-        const hp = parseInt(ch, 10);
+        const hp = ch === 'E' ? ELITE_HP : parseInt(ch, 10);
         bricks.push({
           x: margin + c * (bw + gap), y: top + r * (bh + gap),
-          w: bw, h: bh, hp, maxHp: hp, alive: true,
+          w: bw, h: bh, hp, maxHp: hp, alive: true, elite: ch === 'E',
         });
       }
     }
     buildWells(n);
+    boss = null; bossSpawned = false; // #24: the Core only wakes on level 5
+  }
+
+  // #24: the Void Core awakens — one big 12-HP brick at the top of the
+  // cleared field, with fanfare. It joins `bricks`, so the normal hit,
+  // reflect and clear logic all apply to it (with boss special-casing).
+  function spawnBoss() {
+    bossSpawned = true;
+    boss = {
+      x: (W - BOSS_W) / 2, y: 78, w: BOSS_W, h: BOSS_H,
+      hp: BOSS_HP, maxHp: BOSS_HP, alive: true, boss: true,
+    };
+    bricks.push(boss);
+    floatText(W / 2, 200, BOSS_NAME + ' AWAKENS!', BOSS_COLOR);
+    floatText(W / 2, 224, 'BREAK THE CORE TO CLEAR THE LEVEL', '#f2ecff');
+    ringBurst(W / 2, 98, BOSS_COLOR, 260);
+    burst(W / 2, 98, BOSS_COLOR, 40, 420);
+    shake = Math.min(SHAKE_MAX, shake + 8);
+    sfx.explosion();
+    updateHUD();
   }
 
   function newBall(x, y, vx, vy) {
@@ -664,9 +706,9 @@
   // ---------- Powerups (backlog #1, #2, #7) ----------
   // Destroyed bricks have a 12% chance to drop a falling capsule; catch it
   // with the paddle to activate. Capsules missed fall off the bottom.
-  function maybeDropPowerup(x, y) {
+  function maybeDropPowerup(x, y, chance) {
     if (powerups.length >= 3) return;
-    if (Math.random() >= POWERUP_DROP_CHANCE) return;
+    if (Math.random() >= (chance || POWERUP_DROP_CHANCE)) return;
     const type = Math.random() < 0.5 ? 'multi' : 'wide';
     powerups.push({ x, y, type, vy: 150 });
   }
@@ -769,6 +811,7 @@
     upgradesOwned = {};
     draftChoices = [];
     lastScoreRank = -1;
+    boss = null; bossSpawned = false; fireAnnounced = false; // #24, #31
     resetStats();
     paddle.w = paddleBaseW();
     wideTimer = 0;
@@ -814,6 +857,7 @@
     combo = 0; comboTimer = 0; bricksBrokenRun = 0;
     upgradesOwned = {};
     draftChoices = [];
+    boss = null; bossSpawned = false; fireAnnounced = false; // #24, #31
     resetStats();
     paddle.w = paddleBaseW();
     wideTimer = 0;
@@ -842,9 +886,17 @@
     shake = Math.min(SHAKE_MAX, shake + 8);
     const bonus = levelClearBonus();
     score += bonus;
+    // Block 10 difficulty balance: clearing a level restores +1 life (up
+    // to MAX_LIVES). The wells can swallow ~1 ball per level, so without
+    // this a perfect-tracking AI bled out across levels 2-4 (4 swallows
+    // vs 3 starting lives) without ever missing a ball — the hazard alone
+    // could end a run. The restore keeps the wells threatening but never
+    // run-ending by attrition alone.
+    const lifeRestored = lives < MAX_LIVES;
+    if (lifeRestored) lives++;
     const last = level >= LEVELS.length;
     levelTitle.textContent = last ? 'YOU BEAT THE VOID!' : 'LEVEL ' + level + ' CLEAR!';
-    levelStats.innerHTML = '“' + (LEVEL_NAMES[level - 1] || '') + '” cleared &nbsp;·&nbsp; Clear bonus <strong>+' + bonus + '</strong><br>Score <strong>' + score + '</strong> &nbsp;·&nbsp; Best <strong>' + Math.max(best, score) + '</strong><br>Time ' + fmtTime(performance.now() - runStart);
+    levelStats.innerHTML = '“' + (LEVEL_NAMES[level - 1] || '') + '” cleared &nbsp;·&nbsp; Clear bonus <strong>+' + bonus + '</strong>' + (lifeRestored ? ' &nbsp;·&nbsp; <strong>+1 LIFE</strong>' : '') + '<br>Score <strong>' + score + '</strong> &nbsp;·&nbsp; Best <strong>' + Math.max(best, score) + '</strong><br>Time ' + fmtTime(performance.now() - runStart);
     nextLevelBtn.textContent = last ? 'SEE RESULTS ▶' : 'DRAFT UPGRADE ▶';
     levelOverlay.classList.remove('hidden');
     focusEl(nextLevelBtn); // #41: keyboard focus lands on the continue button
@@ -1106,7 +1158,8 @@
         // #11: every brick contact counts; a pending paddle shot is a hit.
         stats.brickHits++;
         if (shotPending) { stats.shotsHit++; shotPending = false; }
-        const color = BRICK_COLORS[b.maxHp];
+        // #20 / #24: elite bricks glow violet, the Void Core glows red.
+        const color = b.boss ? BOSS_COLOR : BRICK_COLORS[b.maxHp];
         if (b.hp <= 0) {
           b.alive = false;
           combo++;
@@ -1114,8 +1167,12 @@
           comboTimer = comboWindow();
           bricksBrokenRun++;
           stats.bricksBroken++; // #11
-          maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2);
-          const pts = Math.round(BRICK_SCORE[b.maxHp] * mult() * scoreMult()); // #10 score stacks
+          // #20: elite bricks drop powerups twice as often.
+          maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2, b.elite ? ELITE_DROP_CHANCE : undefined);
+          // #24: the Core is worth 1500; everything else uses its table score.
+          const pts = b.boss
+            ? Math.round(BOSS_SCORE * mult() * scoreMult())
+            : Math.round(BRICK_SCORE[b.maxHp] * mult() * scoreMult()); // #10 score stacks
           score += pts;
           floatText(b.x + b.w / 2, b.y, '+' + pts + (mult() > 1 ? ' ×' + mult() : ''), color);
           burst(b.x + b.w / 2, b.y + b.h / 2, color, 14, 260);
@@ -1124,9 +1181,23 @@
           hitStop = Math.min(HITSTOP_MAX, 0.03 + 0.015 * b.maxHp); // #26 micro freeze
           // #30: shake scales with brick toughness and the combo multiplier.
           shake = Math.min(SHAKE_MAX, shake + (1.5 + b.maxHp) * (1 + 0.25 * (mult() - 1)));
-          sfx.brick(combo);
+          if (b.boss) {
+            // #24: breaking the Core is the run's biggest moment so far.
+            sfx.explosion();
+            ringBurst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 300);
+            burst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 40, 480);
+            floatText(W / 2, 200, 'VOID CORE DESTROYED!', BOSS_COLOR);
+            boss = null;
+          } else {
+            sfx.brick(combo);
+          }
           updateHUD();
-          if (bricks.every((bb) => !bb.alive)) { onLevelClear(); return 'clear'; }
+          if (bricks.every((bb) => !bb.alive)) {
+            // #24: on level 5 the Core wakes instead of clearing — the
+            // level only ends once the boss itself is destroyed.
+            if (level === BOSS_LEVEL && !bossSpawned) { spawnBoss(); }
+            else { onLevelClear(); return 'clear'; }
+          }
         } else {
           score += 10;
           burst(b.x + b.w / 2, b.y + b.h / 2, color, 5, 160);
@@ -1245,6 +1316,28 @@
       for (const b of balls) {
         b.trail.push({ x: b.x, y: b.y });
         if (b.trail.length > 18) b.trail.shift(); // #27: longer trail
+      }
+      // #31: at multiplier ×3+ the ball is ON FIRE — flame particles
+      // stream off every live ball, announced once per hot streak.
+      const m = mult();
+      if (m >= 3) {
+        if (!fireAnnounced) {
+          fireAnnounced = true;
+          floatText(W / 2, H / 2 - 60, 'ON FIRE! ×' + m, '#ff7b00');
+        }
+        for (const b of balls) {
+          for (let f = 0; f < 2 && particles.length < 400; f++) {
+            particles.push({
+              x: b.x + (Math.random() - 0.5) * 14, y: b.y + (Math.random() - 0.5) * 14,
+              vx: (Math.random() - 0.5) * 40, vy: -60 - Math.random() * 90,
+              life: 0.25 + Math.random() * 0.25, maxLife: 0.5,
+              color: ['#ff7b00', '#ffb300', '#ff2d95'][Math.floor(Math.random() * 3)],
+              size: 1.5 + Math.random() * 2,
+            });
+          }
+        }
+      } else {
+        fireAnnounced = false;
       }
       // Wide-paddle countdown ticks in the HUD once per second.
       const pt = powerText();
@@ -1383,20 +1476,34 @@
     // Bricks.
     for (const b of bricks) {
       if (!b.alive) continue;
-      const color = BRICK_COLORS[b.hp];
+      // #20 / #24: elite bricks glow violet, the Void Core glows red and
+      // pulses; everything else uses its HP table color.
+      const color = b.boss ? BOSS_COLOR : BRICK_COLORS[b.hp];
       ctx.save();
       ctx.shadowColor = color;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = b.boss ? 18 + 8 * Math.sin(t * 5) : 10;
       ctx.fillStyle = color;
       ctx.globalAlpha = 0.92;
       rr(b.x, b.y, b.w, b.h, 5);
       ctx.fill();
       ctx.restore();
-      // Top highlight + hp pips.
+      // Top highlight + hp pips (the Core gets a bar instead of pips).
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
       rr(b.x + 2, b.y + 2, b.w - 4, 6, 3);
       ctx.fill();
-      if (b.hp > 1) {
+      if (b.boss) {
+        // #24: HP bar floating just below the Core (above would hit the
+        // combo timer bar).
+        const bw = b.w;
+        ctx.fillStyle = 'rgba(7,3,18,0.8)';
+        ctx.fillRect(b.x, b.y + b.h + 8, bw, 7);
+        ctx.fillStyle = BOSS_COLOR;
+        ctx.fillRect(b.x, b.y + b.h + 8, bw * (b.hp / b.maxHp), 7);
+        ctx.fillStyle = '#ffd7de';
+        ctx.font = '800 10px "Segoe UI", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(BOSS_NAME + '  ' + b.hp + '/' + b.maxHp, b.x + bw / 2, b.y + b.h + 28);
+      } else if (b.hp > 1) {
         ctx.fillStyle = 'rgba(7,3,18,0.75)';
         for (let p = 0; p < b.hp; p++) {
           ctx.beginPath();
@@ -1404,6 +1511,19 @@
           ctx.fill();
         }
       }
+    }
+
+    // #24: top-of-screen boss bar while the Core lives — the player can
+    // read the fight at a glance without looking up at the brick.
+    if (boss && boss.alive) {
+      const bw = 260;
+      ctx.fillStyle = 'rgba(7,3,18,0.7)';
+      ctx.fillRect((W - bw) / 2, 62, bw, 8);
+      ctx.fillStyle = BOSS_COLOR;
+      ctx.fillRect((W - bw) / 2, 62, bw * (boss.hp / boss.maxHp), 8);
+      ctx.strokeStyle = 'rgba(255,77,109,0.6)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect((W - bw) / 2, 62, bw, 8);
     }
 
     // Falling powerup capsules (backlog #7).
@@ -1437,27 +1557,29 @@
 
     // Ball trails + balls (multi-ball draws every live ball).
     // #27: longer, brighter trail — fades from the ball back to a ghost.
+    // #31: at ×3+ the ball burns orange — hot trail, hot glow, hot core.
+    const hot = mode === 'playing' && mult() >= 3;
     if (mode !== 'menu') {
       for (const b of balls) {
         for (let i = 0; i < b.trail.length; i++) {
           const tp = b.trail[i];
           const f = i / b.trail.length;
           ctx.globalAlpha = f * 0.45;
-          ctx.fillStyle = '#00f0ff';
+          ctx.fillStyle = hot ? '#ff7b00' : '#00f0ff';
           ctx.beginPath();
           ctx.arc(tp.x, tp.y, BALL_R * (0.35 + 0.65 * f), 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.globalAlpha = 1;
         ctx.save();
-        ctx.shadowColor = '#ffffff';
-        ctx.shadowBlur = 18;
-        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = hot ? '#ff7b00' : '#ffffff';
+        ctx.shadowBlur = hot ? 26 : 18;
+        ctx.fillStyle = hot ? '#ffe9b0' : '#ffffff';
         ctx.beginPath();
         ctx.arc(b.x, b.y, BALL_R, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
-        ctx.fillStyle = '#00f0ff';
+        ctx.fillStyle = hot ? '#ff7b00' : '#00f0ff';
         ctx.beginPath();
         ctx.arc(b.x, b.y, BALL_R - 3, 0, Math.PI * 2);
         ctx.fill();
