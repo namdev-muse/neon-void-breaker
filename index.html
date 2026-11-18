@@ -36,13 +36,16 @@
       <p class="tagline">Break bricks. Build combos.<br>Don't fall into the void.</p>
       <button id="playBtn" class="btn btn-primary" type="button">▶ &nbsp;PLAY</button>
       <p class="howto">Move with mouse, touch, or ← → keys.<br>Space to launch &amp; pause. M to mute.</p>
+      <div id="menuScores" class="scores"></div>
     </div>
 
     <div id="pauseOverlay" class="overlay hidden">
       <h2>PAUSED</h2>
       <p class="tagline">The void waits for no one. Well — just this once.</p>
+      <p id="pauseStats" class="tagline"></p>
       <button id="resumeBtn" class="btn btn-primary" type="button">▶ &nbsp;RESUME</button>
       <button id="restartBtnPause" class="btn btn-ghost" type="button">RESTART RUN</button>
+      <button id="quitBtnPause" class="btn btn-ghost" type="button">QUIT TO MENU</button>
     </div>
 
     <div id="levelOverlay" class="overlay hidden">
@@ -61,7 +64,9 @@
     <div id="gameOverOverlay" class="overlay hidden">
       <h2 id="gameOverTitle">GAME OVER</h2>
       <p id="gameOverStats" class="tagline"></p>
+      <div id="gameOverScores" class="scores"></div>
       <button id="againBtn" class="btn btn-primary" type="button">↻ &nbsp;PLAY AGAIN</button>
+      <button id="menuBtnOver" class="btn btn-ghost" type="button">MENU</button>
     </div>
 
     <div id="introOverlay" class="overlay intro hidden" aria-live="polite">
@@ -78,7 +83,7 @@
 
   <footer class="foot">
     <span>Built by Iggy · <a href="https://github.com/namdev-muse/neon-void-breaker">GitHub</a></span>
-    <span id="version">v0.6.0 — Sprint Block 6</span>
+    <span id="version">v0.7.0 — Sprint Block 7</span>
   </footer>
 </main>
 <script src="game.js"></script>

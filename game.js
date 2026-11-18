@@ -105,6 +105,8 @@
   const gameOverTitle = $('gameOverTitle'), gameOverStats = $('gameOverStats');
   const nextLevelBtn = $('nextLevelBtn');
   const muteBtn = $('muteBtn'), pauseBtn = $('pauseBtn');
+  const pauseStats = $('pauseStats');
+  const menuScoresEl = $('menuScores'), gameOverScoresEl = $('gameOverScores');
 
   // Crisp rendering on high-DPI screens.
   function fitCanvas() {
@@ -448,6 +450,55 @@
     }
   }
 
+  // ---------- Local top-5 high scores (backlog #43) ----------
+  // Stored as [{s: score, l: level, d: dateMs}] under 'nvb-scores', best first.
+  // Shown on the menu and on the game-over screen; the run's own entry is
+  // highlighted on the game-over table.
+  const SCORES_KEY = 'nvb-scores';
+  const MAX_SCORES = 5;
+  let lastScoreRank = -1; // rank of this run's score in the table, -1 = unranked
+
+  function loadScores() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SCORES_KEY) || '[]');
+      if (!Array.isArray(raw)) return [];
+      return raw.filter((e) => e && typeof e.s === 'number').slice(0, MAX_SCORES);
+    } catch (e) { return []; }
+  }
+
+  function saveScore() {
+    if (score <= 0) { lastScoreRank = -1; return -1; }
+    const list = loadScores();
+    const entry = { s: score, l: level, d: Date.now() };
+    list.push(entry);
+    list.sort((a, b) => b.s - a.s);
+    const trimmed = list.slice(0, MAX_SCORES);
+    lastScoreRank = trimmed.indexOf(entry);
+    try { localStorage.setItem(SCORES_KEY, JSON.stringify(trimmed)); } catch (e) { /* ignore */ }
+    return lastScoreRank;
+  }
+
+  function fmtScoreDate(ms) {
+    try {
+      const d = new Date(ms);
+      return (d.getMonth() + 1) + '/' + d.getDate();
+    } catch (e) { return ''; }
+  }
+
+  function renderScores(highlightRank) {
+    const list = loadScores();
+    const html = list.length
+      ? '<div class="scores-title">TOP RUNS</div>' + list.map((e, i) =>
+          '<div class="score-row' + (i === highlightRank ? ' score-hl' : '') + '">'
+          + '<span class="score-rank">' + (i + 1) + '</span>'
+          + '<span class="score-val">' + e.s + '</span>'
+          + '<span class="score-meta">LV ' + e.l + ' · ' + fmtScoreDate(e.d) + '</span>'
+          + '</div>').join('')
+      : '<div class="scores-title">TOP RUNS</div><div class="scores-empty">No runs yet — be the first.</div>';
+    if (menuScoresEl) menuScoresEl.innerHTML = html;
+    if (gameOverScoresEl) gameOverScoresEl.innerHTML = html;
+  }
+
   function fmtTime(ms) {
     const s = Math.floor(ms / 1000);
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
@@ -608,6 +659,7 @@
     combo = 0; comboTimer = 0; bricksBrokenRun = 0;
     upgradesOwned = {};
     draftChoices = [];
+    lastScoreRank = -1;
     resetStats();
     paddle.w = paddleBaseW();
     wideTimer = 0;
@@ -627,6 +679,8 @@
     if (mode !== 'playing' && mode !== 'serving') return;
     pausedFrom = mode;
     mode = 'paused';
+    // #37: the pause menu shows a snapshot of the run so far.
+    pauseStats.textContent = 'Score ' + score + ' · Level ' + level + ' · Time ' + fmtTime(performance.now() - runStart) + ' · Best combo ×' + Math.max(1, stats.bestCombo);
     pauseOverlay.classList.remove('hidden');
   }
 
@@ -639,6 +693,29 @@
   function togglePause() {
     if (mode === 'paused') resumeGame();
     else pauseGame();
+  }
+
+  // #37: quit to the menu from the pause screen (or the game-over screen).
+  // Resets the run to the attract state; the top-5 table keeps the run's score.
+  function quitToMenu() {
+    score = 0; lives = 3; level = 1;
+    combo = 0; comboTimer = 0; bricksBrokenRun = 0;
+    upgradesOwned = {};
+    draftChoices = [];
+    resetStats();
+    paddle.w = paddleBaseW();
+    wideTimer = 0;
+    powerups = [];
+    paddle.x = (W - paddle.w) / 2;
+    buildLevel(level);
+    resetBall();
+    particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = [];
+    lastScoreRank = -1;
+    hideOverlays();
+    renderScores(-1);
+    menuOverlay.classList.remove('hidden');
+    mode = 'menu';
+    updateHUD();
   }
 
   function onLevelClear() {
@@ -736,17 +813,24 @@
   }
 
   function gameOver(win) {
+    // #38: a run that beats the previous best gets a NEW BEST badge, and
+    // its score joins the local top-5 table (#43) with its rank highlighted.
+    const prevBest = best;
+    const isNewBest = score > prevBest && score > 0;
     saveBest();
+    saveScore();
     mode = 'gameover';
     if (win) sfx.win(); else sfx.over();
     gameOverTitle.textContent = win ? 'VOID CONQUERED!' : 'GAME OVER';
-    gameOverStats.innerHTML = (win ? 'You cleared all ' + LEVELS.length + ' levels.' : 'The void claims another run.')
+    gameOverStats.innerHTML = (isNewBest ? '<span class="new-best">★ NEW BEST! ★</span><br>' : '')
+      + (win ? 'You cleared all ' + LEVELS.length + ' levels.' : 'The void claims another run.')
       + '<br>Score <strong>' + score + '</strong> &nbsp;·&nbsp; Best <strong>' + best + '</strong>'
       + '<br>Level reached: <strong>' + level + '</strong> &nbsp;·&nbsp; Time ' + fmtTime(performance.now() - runStart)
       // #11: run stats — best combo, bricks broken, shot accuracy, powerups.
       + '<br>Best combo <strong>×' + Math.max(1, stats.bestCombo) + '</strong> &nbsp;·&nbsp; Bricks <strong>' + stats.bricksBroken + '</strong> &nbsp;·&nbsp; Accuracy <strong>' + accuracy() + '%</strong>'
       + '<br>Powerups caught <strong>' + stats.powerupsCaught + '</strong> &nbsp;·&nbsp; missed <strong>' + stats.powerupsMissed + '</strong>';
     hideOverlays();
+    renderScores(lastScoreRank);
     gameOverOverlay.classList.remove('hidden');
     updateHUD();
   }
@@ -1203,6 +1287,10 @@
       else if (mode === 'paused') resumeGame();
     }
     if (e.code === 'KeyP') togglePause();
+    if (e.code === 'Escape') {
+      if (mode === 'paused') resumeGame();
+      else if (mode === 'playing' || mode === 'serving') pauseGame();
+    }
     if (e.code === 'KeyM') toggleMute();
     if (e.code === 'Enter') {
       if (mode === 'menu') startRun();
@@ -1221,8 +1309,10 @@
   $('playBtn').addEventListener('click', startRun);
   $('resumeBtn').addEventListener('click', resumeGame);
   $('restartBtnPause').addEventListener('click', startRun);
+  $('quitBtnPause').addEventListener('click', quitToMenu);
   nextLevelBtn.addEventListener('click', advanceFromClear);
   $('againBtn').addEventListener('click', startRun);
+  $('menuBtnOver').addEventListener('click', quitToMenu);
   pauseBtn.addEventListener('click', () => { ensureAudio(); togglePause(); });
   muteBtn.addEventListener('click', () => { ensureAudio(); toggleMute(); });
 
@@ -1230,6 +1320,7 @@
   buildLevel(1);
   resetBall();
   updateHUD();
+  renderScores(-1);
   updateMuteBtn();
   hideOverlays();
   menuOverlay.classList.remove('hidden');

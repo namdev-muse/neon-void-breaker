@@ -225,6 +225,18 @@ canvas {
   line-height: 1.5;
 }
 
+/* Top-5 high-score table (Block 7, #43) + NEW BEST badge (#38). */
+.scores { width: 100%; max-width: 320px; margin-top: 2px; }
+.scores-title { font-size: 11px; font-weight: 800; letter-spacing: 0.3em; color: var(--muted); margin-bottom: 6px; }
+.score-row { display: flex; gap: 10px; align-items: baseline; padding: 3px 8px; font-size: 14px; border-radius: 6px; text-align: left; }
+.score-row.score-hl { background: rgba(182, 255, 0, 0.16); outline: 1px solid rgba(182, 255, 0, 0.5); }
+.score-rank { width: 18px; font-weight: 900; color: var(--cyan); }
+.score-val { font-weight: 900; }
+.score-meta { margin-left: auto; font-size: 12px; color: var(--muted); }
+.scores-empty { font-size: 13px; color: var(--muted); }
+.new-best { display: inline-block; color: var(--lime); font-weight: 900; letter-spacing: 0.14em; text-shadow: 0 0 14px rgba(182, 255, 0, 0.9); animation: best-pulse 1s ease-in-out infinite; }
+@keyframes best-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+
 .howto {
   margin: 6px 0 0;
   color: var(--muted);
