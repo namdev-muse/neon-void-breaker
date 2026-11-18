@@ -95,7 +95,7 @@
   const ctx = canvas.getContext('2d');
   const $ = (id) => document.getElementById(id);
   const scoreEl = $('score'), bestEl = $('best'), levelEl = $('level');
-  const livesEl = $('lives'), comboEl = $('combo');
+  const livesEl = $('lives'), comboEl = $('combo'), powerEl = $('power');
   const menuOverlay = $('menuOverlay'), pauseOverlay = $('pauseOverlay');
   const levelOverlay = $('levelOverlay'), gameOverOverlay = $('gameOverOverlay');
   const introOverlay = $('introOverlay');
@@ -127,7 +127,19 @@
   let paddleVel = 0;
 
   const paddle = { x: (W - 96) / 2, w: 96, targetX: null };
-  const ball = { x: W / 2, y: PADDLE_Y - BALL_R - 1, vx: 0, vy: 0, trail: [] };
+  let balls = [];      // active balls (multi-ball can grow this to 5)
+  let powerups = [];   // falling capsules {x, y, type, vy}
+  let wideTimer = 0;   // seconds of wide paddle remaining
+  let lastPowerText = '—';
+
+  // Powerup defs (backlog #1, #2, #7): glyph drawn on the capsule.
+  const POWERUP_TYPES = {
+    multi: { label: 'MULTI-BALL', color: '#b6ff00', glyph: 'M' },
+    wide: { label: 'WIDE PADDLE', color: '#00f0ff', glyph: 'W' },
+  };
+  const POWERUP_DROP_CHANCE = 0.12; // per brick destroyed
+  const MAX_BALLS = 5;
+  const PADDLE_W = 96, PADDLE_WIDE_W = 144, WIDE_DURATION = 15;
 
   try { best = parseInt(localStorage.getItem(BEST_KEY) || '0', 10) || 0; } catch (e) { best = 0; }
 
@@ -200,6 +212,9 @@
     win() {
       [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, { dur: 0.2, type: 'triangle', gain: 0.32, delay: i * 0.1 }));
     },
+    powerup() {
+      [660, 880, 1320].forEach((f, i) => tone(f, { dur: 0.12, type: 'triangle', gain: 0.3, delay: i * 0.06 }));
+    },
   };
 
   function updateMuteBtn() {
@@ -253,6 +268,14 @@
     }, 1700);
   }
 
+  // Active-powerup line for the HUD (backlog #7): wide timer + ball count.
+  function powerText() {
+    const parts = [];
+    if (wideTimer > 0) parts.push('WIDE ' + Math.ceil(wideTimer) + 's');
+    if (balls.length > 1) parts.push('×' + balls.length + ' BALLS');
+    return parts.length ? parts.join(' · ') : '—';
+  }
+
   function updateHUD() {
     scoreEl.textContent = score;
     bestEl.textContent = Math.max(best, score);
@@ -260,6 +283,8 @@
     livesEl.textContent = '●'.repeat(Math.max(0, lives)) + '○'.repeat(Math.max(0, 3 - lives));
     comboEl.textContent = '×' + mult();
     comboEl.style.color = combo > 0 ? '#b6ff00' : '';
+    lastPowerText = powerText();
+    powerEl.textContent = lastPowerText;
   }
 
   function saveBest() {
@@ -295,21 +320,80 @@
     }
   }
 
+  function newBall(x, y, vx, vy) {
+    return { x, y, vx, vy, trail: [] };
+  }
+
   function resetBall() {
-    ball.x = paddle.x + paddle.w / 2;
-    ball.y = PADDLE_Y - BALL_R - 1;
-    ball.vx = 0; ball.vy = 0;
-    ball.trail = [];
+    balls = [newBall(paddle.x + paddle.w / 2, PADDLE_Y - BALL_R - 1, 0, 0)];
   }
 
   function launch() {
     if (mode !== 'serving') return;
     const speed = ballSpeed();
     const angle = -Math.PI / 2 + (Math.random() * 0.5 - 0.25);
-    ball.vx = Math.cos(angle) * speed;
-    ball.vy = Math.sin(angle) * speed;
+    balls[0].vx = Math.cos(angle) * speed;
+    balls[0].vy = Math.sin(angle) * speed;
     mode = 'playing';
     sfx.launch();
+  }
+
+  // ---------- Powerups (backlog #1, #2, #7) ----------
+  // Destroyed bricks have a 12% chance to drop a falling capsule; catch it
+  // with the paddle to activate. Capsules missed fall off the bottom.
+  function maybeDropPowerup(x, y) {
+    if (powerups.length >= 3) return;
+    if (Math.random() >= POWERUP_DROP_CHANCE) return;
+    const type = Math.random() < 0.5 ? 'multi' : 'wide';
+    powerups.push({ x, y, type, vy: 150 });
+  }
+
+  function activatePowerup(type) {
+    const def = POWERUP_TYPES[type];
+    if (!def) return;
+    if (type === 'multi') {
+      // Split: two extra balls fan out from the first live ball.
+      const src = balls[0];
+      if (src) {
+        const sp = Math.hypot(src.vx, src.vy) || ballSpeed();
+        const base = Math.atan2(src.vy, src.vx);
+        for (const da of [-0.45, 0.45]) {
+          if (balls.length >= MAX_BALLS) break;
+          balls.push(newBall(src.x, src.y, Math.cos(base + da) * sp, Math.sin(base + da) * sp));
+        }
+      }
+      floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'MULTI-BALL!', def.color);
+    } else if (type === 'wide') {
+      paddle.w = PADDLE_WIDE_W;
+      paddle.x = clamp(paddle.x - (PADDLE_WIDE_W - PADDLE_W) / 2, 8, W - paddle.w - 8);
+      wideTimer = WIDE_DURATION;
+      floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'WIDE PADDLE!', def.color);
+    }
+    burst(paddle.x + paddle.w / 2, PADDLE_Y, def.color, 16, 240);
+    sfx.powerup();
+    updateHUD();
+  }
+
+  function updatePowerups(dt) {
+    for (let i = powerups.length - 1; i >= 0; i--) {
+      const p = powerups[i];
+      p.y += p.vy * dt;
+      if (p.y + 10 >= PADDLE_Y && p.y - 10 <= PADDLE_Y + PADDLE_H
+        && p.x >= paddle.x - 6 && p.x <= paddle.x + paddle.w + 6) {
+        powerups.splice(i, 1);
+        activatePowerup(p.type);
+        continue;
+      }
+      if (p.y - 12 > H) powerups.splice(i, 1);
+    }
+    if (wideTimer > 0) {
+      wideTimer -= dt;
+      if (wideTimer <= 0) {
+        wideTimer = 0;
+        paddle.w = PADDLE_W;
+        paddle.x = clamp(paddle.x, 8, W - paddle.w - 8);
+      }
+    }
   }
 
   // ---------- Juice ----------
@@ -337,7 +421,9 @@
     ensureAudio();
     score = 0; lives = 3; level = 1;
     combo = 0; comboTimer = 0; bricksBrokenRun = 0;
-    paddle.w = 96;
+    paddle.w = PADDLE_W;
+    wideTimer = 0;
+    powerups = [];
     paddle.x = (W - paddle.w) / 2;
     runStart = performance.now();
     buildLevel(level);
@@ -387,6 +473,9 @@
     buildLevel(level);
     resetBall();
     combo = 0; comboTimer = 0;
+    paddle.w = PADDLE_W;
+    wideTimer = 0;
+    powerups = [];
     levelOverlay.classList.add('hidden');
     showIntro(level);
     mode = 'serving';
@@ -411,7 +500,7 @@
     combo = 0; comboTimer = 0;
     shake = 12;
     sfx.lose();
-    burst(ball.x, H - 12, '#ff2d95', 26, 300);
+    burst(paddle.x + paddle.w / 2, H - 12, '#ff2d95', 26, 300);
     updateHUD();
     if (lives <= 0) { gameOver(false); return; }
     resetBall();
@@ -419,7 +508,7 @@
   }
 
   // ---------- Physics ----------
-  function reflectOffBrick(b) {
+  function reflectOffBrick(b, ball) {
     const cx = clamp(ball.x, b.x, b.x + b.w);
     const cy = clamp(ball.y, b.y, b.y + b.h);
     let dx = ball.x - cx, dy = ball.y - cy;
@@ -455,7 +544,9 @@
     return true;
   }
 
-  function stepBall(dt) {
+  // Steps one ball; returns 'lost' if it fell off the bottom, 'clear' if the
+  // last brick broke, 'stop' if the mode changed mid-step, else 'ok'.
+  function stepBall(dt, ball) {
     const speed = Math.hypot(ball.vx, ball.vy) || ballSpeed();
     const dist = speed * dt;
     const steps = Math.max(1, Math.ceil(dist / 4));
@@ -468,7 +559,7 @@
       if (ball.x < BALL_R) { ball.x = BALL_R; ball.vx = Math.abs(ball.vx); sfx.wall(); burst(ball.x, ball.y, '#00f0ff', 3, 120); }
       if (ball.x > W - BALL_R) { ball.x = W - BALL_R; ball.vx = -Math.abs(ball.vx); sfx.wall(); burst(ball.x, ball.y, '#00f0ff', 3, 120); }
       if (ball.y < BALL_R) { ball.y = BALL_R; ball.vy = Math.abs(ball.vy); sfx.wall(); burst(ball.x, ball.y, '#00f0ff', 3, 120); }
-      if (ball.y - BALL_R > H) { loseBall(); return; }
+      if (ball.y - BALL_R > H) return 'lost';
 
       // Paddle (only while moving down).
       if (ball.vy > 0
@@ -493,7 +584,7 @@
         if (!b.alive) continue;
         if (ball.x + BALL_R < b.x || ball.x - BALL_R > b.x + b.w
           || ball.y + BALL_R < b.y || ball.y - BALL_R > b.y + b.h) continue;
-        if (!reflectOffBrick(b)) continue;
+        if (!reflectOffBrick(b, ball)) continue;
         b.hp--;
         const color = BRICK_COLORS[b.maxHp];
         if (b.hp <= 0) {
@@ -501,6 +592,7 @@
           combo++;
           comboTimer = comboWindow();
           bricksBrokenRun++;
+          maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2);
           const pts = BRICK_SCORE[b.maxHp] * mult();
           score += pts;
           floatText(b.x + b.w / 2, b.y, '+' + pts + (mult() > 1 ? ' ×' + mult() : ''), color);
@@ -508,7 +600,7 @@
           shake = Math.min(8, shake + 1.5 + b.maxHp);
           sfx.brick(combo);
           updateHUD();
-          if (bricks.every((bb) => !bb.alive)) { onLevelClear(); return; }
+          if (bricks.every((bb) => !bb.alive)) { onLevelClear(); return 'clear'; }
         } else {
           score += 10;
           burst(b.x + b.w / 2, b.y + b.h / 2, color, 5, 160);
@@ -517,7 +609,21 @@
         }
         break;
       }
-      if (mode !== 'playing') return;
+      if (mode !== 'playing') return 'stop';
+    }
+    return 'ok';
+  }
+
+  // Steps every live ball; losing one ball only costs a life when it's the last.
+  function stepBalls(dt) {
+    for (let i = balls.length - 1; i >= 0; i--) {
+      const res = stepBall(dt, balls[i]);
+      if (res === 'lost') {
+        balls.splice(i, 1);
+        if (balls.length === 0) { loseBall(); return; }
+      } else if (res === 'clear' || res === 'stop') {
+        return;
+      }
     }
   }
 
@@ -561,9 +667,15 @@
         paddle.x = clamp(paddle.x, 8, W - paddle.w - 8);
       }
       paddleVel = (paddle.x - prevX) / Math.max(dt, 0.001);
-      stepBall(dt);
-      ball.trail.push({ x: ball.x, y: ball.y });
-      if (ball.trail.length > 10) ball.trail.shift();
+      updatePowerups(dt);
+      stepBalls(dt);
+      for (const b of balls) {
+        b.trail.push({ x: b.x, y: b.y });
+        if (b.trail.length > 10) b.trail.shift();
+      }
+      // Wide-paddle countdown ticks in the HUD once per second.
+      const pt = powerText();
+      if (pt !== lastPowerText) { lastPowerText = pt; powerEl.textContent = pt; }
     } else if (mode === 'serving') {
       const prevX = paddle.x;
       let dir = 0;
@@ -576,9 +688,11 @@
         paddle.x = clamp(paddle.x, 8, W - paddle.w - 8);
       }
       paddleVel = (paddle.x - prevX) / Math.max(dt, 0.001);
-      ball.x = paddle.x + paddle.w / 2;
-      ball.y = PADDLE_Y - BALL_R - 1;
-      ball.trail = [];
+      if (balls[0]) {
+        balls[0].x = paddle.x + paddle.w / 2;
+        balls[0].y = PADDLE_Y - BALL_R - 1;
+        balls[0].trail = [];
+      }
     }
   }
 
@@ -644,6 +758,22 @@
       }
     }
 
+    // Falling powerup capsules (backlog #7).
+    for (const p of powerups) {
+      const def = POWERUP_TYPES[p.type];
+      ctx.save();
+      ctx.shadowColor = def.color;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = def.color;
+      rr(p.x - 13, p.y - 10, 26, 20, 8);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#070312';
+      ctx.font = '800 13px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(def.glyph, p.x, p.y + 5);
+    }
+
     // Paddle.
     ctx.save();
     ctx.shadowColor = '#00f0ff';
@@ -657,29 +787,31 @@
     ctx.fill();
     ctx.restore();
 
-    // Ball trail + ball.
-    for (let i = 0; i < ball.trail.length; i++) {
-      const tp = ball.trail[i];
-      ctx.globalAlpha = (i / ball.trail.length) * 0.3;
-      ctx.fillStyle = '#00f0ff';
-      ctx.beginPath();
-      ctx.arc(tp.x, tp.y, BALL_R * (0.4 + 0.6 * i / ball.trail.length), 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
+    // Ball trails + balls (multi-ball draws every live ball).
     if (mode !== 'menu') {
-      ctx.save();
-      ctx.shadowColor = '#ffffff';
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      ctx.fillStyle = '#00f0ff';
-      ctx.beginPath();
-      ctx.arc(ball.x, ball.y, BALL_R - 3, 0, Math.PI * 2);
-      ctx.fill();
+      for (const b of balls) {
+        for (let i = 0; i < b.trail.length; i++) {
+          const tp = b.trail[i];
+          ctx.globalAlpha = (i / b.trail.length) * 0.3;
+          ctx.fillStyle = '#00f0ff';
+          ctx.beginPath();
+          ctx.arc(tp.x, tp.y, BALL_R * (0.4 + 0.6 * i / b.trail.length), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.save();
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, BALL_R, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = '#00f0ff';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, BALL_R - 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // Particles.

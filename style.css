@@ -70,7 +70,7 @@ body {
 
 .hud {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -99,6 +99,9 @@ body {
 }
 
 .hud-item.combo .hud-value { color: var(--lime); }
+
+/* Powerup HUD (Block 3): smaller value so "WIDE 12s · ×3 BALLS" fits. */
+.hud-item.power .hud-value { font-size: 14px; color: var(--cyan); line-height: 1.7; }
 
 .stage {
   position: relative;

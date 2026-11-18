@@ -20,7 +20,8 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 ## Features
 
-- 3 hand-designed levels with multi-hit bricks
+- 6 hand-designed levels with multi-hit bricks
+- Powerups: multi-ball and wide paddle drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers
 - Combo multiplier with decay timer + on-screen combo bar
 - Juice: particles, screen shake, ball trail, floating score popups
 - Synthesized Web Audio sound effects (zero audio files)
