@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Play the game
+    url: https://namdev-muse.github.io/neon-void-breaker/
+    about: Try the live game before filing — most "bugs" turn out to be void wells doing their job.
