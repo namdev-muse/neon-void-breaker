@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0b0620">
 <title>Neon Void Breaker</title>
 <meta name="description" content="Neon Void Breaker — a neon brick-breaker roguelite. Break bricks, build combos, dodge void gravity wells, draft upgrades.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0620'/%3E%3Crect x='6' y='6' width='20' height='7' rx='2' fill='%23ff2d95'/%3E%3Ccircle cx='16' cy='20' r='4' fill='%2300f0ff'/%3E%3Crect x='9' y='26' width='14' height='3' rx='1.5' fill='%23b6ff00'/%3E%3C/svg%3E">
@@ -35,7 +36,7 @@
       <h1>NEON VOID<br>BREAKER</h1>
       <p class="tagline">Break bricks. Build combos.<br>Don't fall into the void.</p>
       <button id="playBtn" class="btn btn-primary" type="button">▶ &nbsp;PLAY</button>
-      <p class="howto">Move with mouse, touch, or ← → keys.<br>Space to launch &amp; pause. M to mute.</p>
+      <p class="howto">Move with mouse, touch drag, or ← → keys.<br>Space to launch &amp; pause. P pause · R resume · Q quit · M mute.</p>
       <div id="menuScores" class="scores"></div>
     </div>
 
@@ -78,12 +79,12 @@
 
   <section class="help">
     <p><strong>How to play:</strong> Bounce the ball with your paddle to smash every brick. Chain hits without missing to raise your combo multiplier. Clear the board to advance. Lose the ball and you lose a life — lose them all and the run ends.</p>
-    <p class="controls">Mouse / touch / ← → move &nbsp;·&nbsp; Space launch &amp; pause &nbsp;·&nbsp; M mute &nbsp;·&nbsp; P pause</p>
+    <p class="controls">Mouse / touch drag / ← → move &nbsp;·&nbsp; Space launch &amp; pause &nbsp;·&nbsp; P pause · R resume · Q quit &nbsp;·&nbsp; M mute &nbsp;·&nbsp; 1 / 2 / 3 draft picks</p>
   </section>
 
   <footer class="foot">
     <span>Built by Iggy · <a href="https://github.com/namdev-muse/neon-void-breaker">GitHub</a></span>
-    <span id="version">v0.7.0 — Sprint Block 7</span>
+    <span id="version">v0.8.0 — Sprint Block 8</span>
   </footer>
 </main>
 <script src="game.js"></script>

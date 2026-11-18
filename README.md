@@ -12,13 +12,14 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 | Control | Action |
 |---|---|
-| Mouse / touch / ← → (or A / D) | Move paddle |
+| Mouse / touch drag / ← → (or A / D) | Move paddle |
 | Space / tap | Launch ball, pause |
 | P / Space | Pause / resume |
-| Esc | Pause / resume |
+| Esc | Pause / resume (quit to menu from game over) |
+| R / N / Q (while paused) | Resume / restart / quit to menu |
 | M | Mute / unmute |
-| Enter | Start, advance |
-| 1 / 2 / 3 | Pick an upgrade in the draft |
+| Enter / Space | Start, advance |
+| 1 / 2 / 3 (or ← → + Enter) | Pick an upgrade in the draft |
 
 ## Features
 
@@ -28,6 +29,9 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 - Run stats: best combo, bricks broken, shot accuracy, and powerups caught/missed shown on the game-over screen (Block 6)
 - Pause menu with run snapshot, restart, and quit-to-menu (Esc / P / Space to pause &amp; resume) (Block 7)
 - Local top-5 high-score table on the menu and game-over screens, with a ★ NEW BEST! ★ badge and your rank highlighted (Block 7)
+- Touch polish: drag the paddle with your finger, tap to launch, no page scroll or pull-to-refresh while playing, no long-press menu (Block 8)
+- Full keyboard-only play: Space/Enter start and advance, R/N/Q pause-menu shortcuts, ← → moves focus across draft cards, every overlay focuses its primary button, visible focus rings (Block 8)
+- Small-phone responsive pass: 3-column HUD, shrinking draft cards, safe-area padding, landscape mode hides the help text and fits the canvas to the viewport height (Block 8)
 - Combo multiplier with decay timer + on-screen combo bar
 - Juice: particles, screen shake that scales with break size and combo, hit-stop freeze frames, impact flashes, shockwave rings, long ball trail, floating score popups
 - Synthesized Web Audio sound effects (zero audio files)

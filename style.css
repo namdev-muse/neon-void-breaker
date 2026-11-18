@@ -20,9 +20,12 @@ html, body {
   color: var(--text);
   font-family: "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
   min-height: 100%;
+  /* #42: the game owns the viewport — no pull-to-refresh or overscroll glow. */
+  overscroll-behavior: none;
 }
 
 body {
+  -webkit-tap-highlight-color: transparent;
   background:
     radial-gradient(700px 400px at 15% -5%, rgba(255, 45, 149, 0.25), transparent 60%),
     radial-gradient(700px 400px at 90% 0%, rgba(0, 240, 255, 0.22), transparent 60%),
@@ -45,7 +48,8 @@ body {
 .shell {
   max-width: 780px;
   margin: 0 auto;
-  padding: 18px 14px 28px;
+  /* #42: respect notched-phone safe areas. */
+  padding: 18px max(14px, env(safe-area-inset-right)) 28px max(14px, env(safe-area-inset-left));
   position: relative;
 }
 
@@ -110,6 +114,11 @@ body {
   border: 1px solid var(--border);
   box-shadow: 0 0 0 1px rgba(255, 45, 149, 0.18), 0 0 34px rgba(0, 240, 255, 0.22), 0 18px 50px rgba(0, 0, 0, 0.5);
   background: #070312;
+  /* #40/#42: touches on the stage drive the paddle, never the page. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 canvas {
@@ -117,6 +126,9 @@ canvas {
   width: 100%;
   height: auto;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .overlay {
@@ -184,7 +196,9 @@ canvas {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  width: 168px;
+  /* #42: cards shrink to fit narrow phones instead of overflowing. */
+  flex: 1 1 150px;
+  max-width: 168px;
   padding: 18px 12px 14px;
   background: rgba(20, 10, 50, 0.85);
   border: 2px solid var(--cyan);
@@ -198,7 +212,9 @@ canvas {
 .draft-card:hover, .draft-card:focus-visible {
   transform: translateY(-4px) scale(1.03);
   box-shadow: 0 0 28px rgba(0, 240, 255, 0.45);
-  outline: none;
+  /* #41: keep a visible keyboard-focus ring (was outline: none). */
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
 }
 
 .draft-key {
@@ -253,6 +269,15 @@ canvas {
   cursor: pointer;
   border: 1px solid transparent;
   transition: transform 0.08s ease, box-shadow 0.15s ease, background 0.15s ease;
+  /* #40: taps fire immediately, no double-tap-zoom delay. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* #41: every button shows a clear keyboard-focus ring. */
+.btn:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
 }
 
 .btn:active { transform: scale(0.97); }
@@ -301,10 +326,43 @@ canvas {
 
 .foot a { color: var(--cyan); }
 
-@media (max-width: 520px) {
+/* #42: small-phone responsive pass. */
+@media (max-width: 560px) {
+  /* HUD wraps to 3 + 3 so values stay readable on a 360px screen. */
+  .hud { grid-template-columns: repeat(3, 1fr); }
+  .hud-item { padding: 6px 4px; }
+  .hud-value { font-size: 17px; }
   .overlay h1 { font-size: 34px; }
-  .hud-value { font-size: 16px; }
+  .overlay h2 { font-size: 26px; }
   .logo { font-size: 16px; }
   .btn-ghost { padding: 8px 10px; }
-  .draft-card { width: 150px; padding: 14px 10px 12px; }
+  .draft-card { padding: 14px 10px 12px; }
+  .help { font-size: 13px; padding: 10px 12px; }
+}
+
+@media (max-width: 380px) {
+  .shell { padding-top: 10px; }
+  .logo { font-size: 14px; letter-spacing: 0.08em; }
+  .hud-value { font-size: 15px; }
+  .hud-item.power .hud-value { font-size: 12px; }
+  .overlay { padding: 16px; gap: 9px; }
+  .overlay h1 { font-size: 30px; }
+  .overlay h2 { font-size: 23px; }
+  .tagline { font-size: 13px; }
+  .btn { padding: 10px 18px; }
+  .draft-card { flex-basis: 100px; padding: 12px 8px 10px; }
+  .draft-glyph { font-size: 24px; }
+  .draft-name { font-size: 13px; }
+  .foot { flex-direction: column; gap: 2px; }
+}
+
+/* #42: short landscape screens (phones held sideways) — hide the help text
+   and cap the canvas height so the whole game fits without scrolling. */
+@media (orientation: landscape) and (max-height: 620px) {
+  .shell { padding-top: 8px; padding-bottom: 12px; }
+  .topbar { margin-bottom: 8px; }
+  .hud { margin-bottom: 8px; }
+  .help { display: none; }
+  .foot { margin-top: 8px; }
+  canvas { max-height: calc(100dvh - 150px); }
 }

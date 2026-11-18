@@ -107,6 +107,15 @@
   const muteBtn = $('muteBtn'), pauseBtn = $('pauseBtn');
   const pauseStats = $('pauseStats');
   const menuScoresEl = $('menuScores'), gameOverScoresEl = $('gameOverScores');
+  const playBtn = $('playBtn'), resumeBtn = $('resumeBtn');
+  const againBtn = $('againBtn');
+
+  // #41: keyboard focus helpers — overlays focus their primary action so a
+  // keyboard-only player never has to hunt with Tab from the top of the page.
+  function focusEl(el) { if (el && el.focus) el.focus(); }
+  function blurActive() {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  }
 
   // Crisp rendering on high-DPI screens.
   function fitCanvas() {
@@ -655,6 +664,8 @@
   // ---------- Flow ----------
   function startRun() {
     ensureAudio();
+    blurActive(); // #41: a clicked PLAY must not stay focused — Space would
+    // re-click it and restart the run instead of launching the ball.
     score = 0; lives = 3; level = 1;
     combo = 0; comboTimer = 0; bricksBrokenRun = 0;
     upgradesOwned = {};
@@ -682,10 +693,12 @@
     // #37: the pause menu shows a snapshot of the run so far.
     pauseStats.textContent = 'Score ' + score + ' · Level ' + level + ' · Time ' + fmtTime(performance.now() - runStart) + ' · Best combo ×' + Math.max(1, stats.bestCombo);
     pauseOverlay.classList.remove('hidden');
+    focusEl(resumeBtn); // #41: keyboard focus lands on RESUME
   }
 
   function resumeGame() {
     if (mode !== 'paused') return;
+    blurActive(); // #41: don't leave RESUME focused under the Space key
     mode = pausedFrom;
     pauseOverlay.classList.add('hidden');
   }
@@ -698,6 +711,7 @@
   // #37: quit to the menu from the pause screen (or the game-over screen).
   // Resets the run to the attract state; the top-5 table keeps the run's score.
   function quitToMenu() {
+    blurActive(); // #41: a focused QUIT button must not eat the next Space
     score = 0; lives = 3; level = 1;
     combo = 0; comboTimer = 0; bricksBrokenRun = 0;
     upgradesOwned = {};
@@ -735,10 +749,12 @@
     levelStats.innerHTML = '“' + (LEVEL_NAMES[level - 1] || '') + '” cleared &nbsp;·&nbsp; Clear bonus <strong>+' + bonus + '</strong><br>Score <strong>' + score + '</strong> &nbsp;·&nbsp; Best <strong>' + Math.max(best, score) + '</strong><br>Time ' + fmtTime(performance.now() - runStart);
     nextLevelBtn.textContent = last ? 'SEE RESULTS ▶' : 'DRAFT UPGRADE ▶';
     levelOverlay.classList.remove('hidden');
+    focusEl(nextLevelBtn); // #41: keyboard focus lands on the continue button
     updateHUD();
   }
 
   function nextLevel() {
+    blurActive(); // #41: don't leave the continue button focused under Space
     if (level >= LEVELS.length) { gameOver(true); return; }
     level++;
     buildLevel(level);
@@ -773,6 +789,7 @@
     draftChoices = avail.slice(0, 3);
     while (draftChoices.length < 3) draftChoices.push('bonus');
     draftCardsEl.innerHTML = '';
+    let firstCard = null;
     draftChoices.forEach((id, i) => {
       const def = id === 'bonus' ? BONUS_UPGRADE : UPGRADES[id];
       const owned = id === 'bonus' ? 0 : (upgradesOwned[id] || 0);
@@ -787,14 +804,26 @@
         + (owned ? '<span class="draft-owned">OWNED ×' + owned + '</span>' : '');
       card.addEventListener('click', () => applyUpgrade(id));
       draftCardsEl.appendChild(card);
+      if (!firstCard) firstCard = card;
     });
     levelOverlay.classList.add('hidden');
     mode = 'draft';
     draftOverlay.classList.remove('hidden');
+    focusEl(firstCard); // #41: keyboard focus lands on the first card
+  }
+
+  // #41: ← → moves keyboard focus across the draft cards (Tab works too).
+  function moveDraftFocus(dir) {
+    const cards = draftCardsEl.children ? Array.from(draftCardsEl.children) : [];
+    if (!cards.length) return;
+    let i = cards.indexOf(document.activeElement);
+    if (i < 0) i = dir > 0 ? -1 : 0;
+    focusEl(cards[(i + dir + cards.length) % cards.length]);
   }
 
   function applyUpgrade(id) {
     if (mode !== 'draft') return;
+    blurActive(); // #41: a clicked card must not stay focused under Space
     if (id === 'bonus') {
       score += 500;
       floatText(W / 2, H / 2 - 40, '+500 VOID CACHE', BONUS_UPGRADE.color);
@@ -832,6 +861,7 @@
     hideOverlays();
     renderScores(lastScoreRank);
     gameOverOverlay.classList.remove('hidden');
+    focusEl(againBtn); // #41: keyboard focus lands on PLAY AGAIN
     updateHUD();
   }
 
@@ -1248,7 +1278,7 @@
       ctx.fillStyle = '#f2ecff';
       ctx.font = '800 16px "Segoe UI", system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('SPACE  or  TAP  to launch', W / 2, H - 110);
+      ctx.fillText('DRAG or ← → to move · SPACE / TAP to launch', W / 2, H - 110);
       ctx.globalAlpha = 1;
     }
 
@@ -1266,15 +1296,35 @@
   });
   canvas.addEventListener('pointerdown', (e) => {
     ensureAudio();
+    // #40: stop double-tap zoom / compatibility mouse events on touch;
+    // the tap itself is the launch gesture in serving mode.
+    if (e.preventDefault) e.preventDefault();
     paddle.targetX = clamp(canvasX(e.clientX) - paddle.w / 2, 8, W - paddle.w - 8);
     if (mode === 'serving') launch();
   });
+  // #40: a long press on the canvas must not pop the browser context menu.
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('dblclick', (e) => e.preventDefault());
+  // #40: dragging on the game stage must never scroll the page or trigger
+  // pull-to-refresh — the paddle owns every touch that starts on the stage.
+  document.addEventListener('touchmove', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.stage')) e.preventDefault();
+  }, { passive: false });
 
   window.addEventListener('keydown', (e) => {
     if (['Space', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
     ensureAudio();
     if (e.repeat) return;
     keys.add(e.code);
+    // #41: a focused button owns Space/Enter — let it activate natively
+    // instead of a game action firing underneath it at the same time.
+    const onButton = e.target && e.target.tagName === 'BUTTON';
+    if (onButton && (e.code === 'Space' || e.code === 'Enter')) return;
+    // #41: ← → moves keyboard focus across the draft cards (Tab works too).
+    if (mode === 'draft' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
+      moveDraftFocus(e.code === 'ArrowRight' ? 1 : -1);
+      return;
+    }
     // #9: draft picks by number key (1 / 2 / 3).
     if (mode === 'draft') {
       const idx = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code);
@@ -1285,10 +1335,13 @@
       if (mode === 'serving') launch();
       else if (mode === 'playing') pauseGame();
       else if (mode === 'paused') resumeGame();
+      else if (mode === 'menu' || mode === 'gameover') startRun();
+      else if (mode === 'levelclear') advanceFromClear();
     }
     if (e.code === 'KeyP') togglePause();
     if (e.code === 'Escape') {
       if (mode === 'paused') resumeGame();
+      else if (mode === 'gameover') quitToMenu();
       else if (mode === 'playing' || mode === 'serving') pauseGame();
     }
     if (e.code === 'KeyM') toggleMute();
@@ -1296,7 +1349,15 @@
       if (mode === 'menu') startRun();
       else if (mode === 'gameover') startRun();
       else if (mode === 'levelclear') advanceFromClear();
+      else if (mode === 'paused') resumeGame();
     }
+    // #41: pause-menu shortcuts — R resume, N restart, Q quit to menu.
+    if (mode === 'paused') {
+      if (e.code === 'KeyR') resumeGame();
+      else if (e.code === 'KeyN') startRun();
+      else if (e.code === 'KeyQ') quitToMenu();
+    }
+    if (mode === 'gameover' && e.code === 'KeyQ') quitToMenu();
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
   window.addEventListener('blur', () => keys.clear());
@@ -1306,12 +1367,12 @@
   });
 
   // ---------- Buttons ----------
-  $('playBtn').addEventListener('click', startRun);
-  $('resumeBtn').addEventListener('click', resumeGame);
+  playBtn.addEventListener('click', startRun);
+  resumeBtn.addEventListener('click', resumeGame);
   $('restartBtnPause').addEventListener('click', startRun);
   $('quitBtnPause').addEventListener('click', quitToMenu);
   nextLevelBtn.addEventListener('click', advanceFromClear);
-  $('againBtn').addEventListener('click', startRun);
+  againBtn.addEventListener('click', startRun);
   $('menuBtnOver').addEventListener('click', quitToMenu);
   pauseBtn.addEventListener('click', () => { ensureAudio(); togglePause(); });
   muteBtn.addEventListener('click', () => { ensureAudio(); toggleMute(); });
@@ -1324,6 +1385,7 @@
   updateMuteBtn();
   hideOverlays();
   menuOverlay.classList.remove('hidden');
+  focusEl(playBtn); // #41: keyboard players start on PLAY, no Tab hunt
 
   let last = performance.now();
   function frame(now) {
