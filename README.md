@@ -17,11 +17,14 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 | P / Space | Pause / resume |
 | M | Mute / unmute |
 | Enter | Start, advance |
+| 1 / 2 / 3 | Pick an upgrade in the draft |
 
 ## Features
 
 - 6 hand-designed levels with multi-hit bricks
 - Powerups: multi-ball and wide paddle drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers
+- Roguelite upgrade draft: after every level clear, pick 1 of 3 upgrades (extra life, wider paddle, ball control, score boost, magnet paddle, twin launch) — they stack and last the whole run (Block 6)
+- Run stats: best combo, bricks broken, shot accuracy, and powerups caught/missed shown on the game-over screen (Block 6)
 - Combo multiplier with decay timer + on-screen combo bar
 - Juice: particles, screen shake that scales with break size and combo, hit-stop freeze frames, impact flashes, shockwave rings, long ball trail, floating score popups
 - Synthesized Web Audio sound effects (zero audio files)
@@ -31,7 +34,7 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 ## Coming up (12-hour sprint roadmap)
 
-Powerups (multi-ball, wide paddle, laser), roguelite upgrade drafts between levels, void gravity wells, elite rows, achievements, more levels, and a v1.0 release. See the sprint plan in the repo's commit history.
+Powerups (multi-ball, wide paddle, laser), void gravity wells, elite rows, achievements, more levels, and a v1.0 release. See the sprint plan in the repo's commit history.
 
 ## Tech
 

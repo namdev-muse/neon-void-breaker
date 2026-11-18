@@ -169,6 +169,55 @@ canvas {
 .overlay h1 { font-size: 44px; line-height: 1.05; }
 .overlay h2 { font-size: 32px; }
 
+/* Upgrade draft (Block 6): 1-of-3 cards between levels. */
+.draft-cards {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.draft-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 168px;
+  padding: 18px 12px 14px;
+  background: rgba(20, 10, 50, 0.85);
+  border: 2px solid var(--cyan);
+  border-radius: 14px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+.draft-card:hover, .draft-card:focus-visible {
+  transform: translateY(-4px) scale(1.03);
+  box-shadow: 0 0 28px rgba(0, 240, 255, 0.45);
+  outline: none;
+}
+
+.draft-key {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.draft-glyph { font-size: 30px; line-height: 1; text-shadow: 0 0 16px currentColor; }
+.draft-name { font-size: 15px; font-weight: 900; letter-spacing: 0.08em; }
+.draft-desc { font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.draft-owned { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; color: var(--lime); }
+
 .tagline {
   margin: 0;
   color: var(--muted);
@@ -245,4 +294,5 @@ canvas {
   .hud-value { font-size: 16px; }
   .logo { font-size: 16px; }
   .btn-ghost { padding: 8px 10px; }
+  .draft-card { width: 150px; padding: 14px 10px 12px; }
 }

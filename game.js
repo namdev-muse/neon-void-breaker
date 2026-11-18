@@ -99,6 +99,7 @@
   const menuOverlay = $('menuOverlay'), pauseOverlay = $('pauseOverlay');
   const levelOverlay = $('levelOverlay'), gameOverOverlay = $('gameOverOverlay');
   const introOverlay = $('introOverlay');
+  const draftOverlay = $('draftOverlay'), draftCardsEl = $('draftCards');
   const introLevel = $('introLevel'), introName = $('introName'), introFlavor = $('introFlavor');
   const levelTitle = $('levelTitle'), levelStats = $('levelStats');
   const gameOverTitle = $('gameOverTitle'), gameOverStats = $('gameOverStats');
@@ -115,7 +116,7 @@
   fitCanvas();
 
   // ---------- State ----------
-  let mode = 'menu'; // menu | serving | playing | paused | levelclear | gameover
+  let mode = 'menu'; // menu | serving | playing | paused | levelclear | draft | gameover
   let pausedFrom = 'playing';
   let score = 0, best = 0, lives = 3, level = 1;
   let combo = 0, comboTimer = 0, bricksBrokenRun = 0;
@@ -144,7 +145,34 @@
   };
   const POWERUP_DROP_CHANCE = 0.12; // per brick destroyed
   const MAX_BALLS = 5;
-  const PADDLE_W = 96, PADDLE_WIDE_W = 144, WIDE_DURATION = 15;
+  const PADDLE_W = 96, WIDE_DURATION = 15;
+
+  // Roguelite upgrade pool (backlog #9, #10): drafted 1-of-3 between levels.
+  // life +1 life (max 5) · paddle +18px permanent width · control −8% ball
+  // speed · score +25% brick score · magnet pulls capsules to the paddle ·
+  // balls +1 ball served each level. 'bonus' fills the draft when the pool
+  // runs dry: an instant +500 score cache.
+  const MAX_LIVES = 5;
+  const UPGRADES = {
+    life: { name: 'EXTRA LIFE', glyph: '♥', desc: '+1 life, up to 5 total', color: '#ff2d95', max: 2 },
+    paddle: { name: 'WIDE PADDLE', glyph: '═', desc: '+18px paddle width, permanent', color: '#00f0ff', max: 3 },
+    control: { name: 'BALL CONTROL', glyph: '◐', desc: 'Ball flies 8% slower, easier angles', color: '#b6ff00', max: 3 },
+    score: { name: 'SCORE BOOST', glyph: '★', desc: '+25% score from every brick', color: '#ffb300', max: 3 },
+    magnet: { name: 'MAGNET PADDLE', glyph: '◎', desc: 'Powerup capsules drift toward you', color: '#8b5cff', max: 2 },
+    balls: { name: 'TWIN LAUNCH', glyph: '●●', desc: 'Serve +1 ball at every level start', color: '#00ffa3', max: 2 },
+  };
+  const BONUS_UPGRADE = { name: 'VOID CACHE', glyph: '◆', desc: '+500 score, instantly', color: '#b6ff00' };
+  let upgradesOwned = {};
+  let draftChoices = [];
+
+  // Run stats (backlog #11): best combo, bricks, paddle returns, shot
+  // accuracy (a "shot" is a paddle return that then hits a brick), powerups.
+  let stats = { bestCombo: 0, bricksBroken: 0, brickHits: 0, paddleHits: 0, ballsLost: 0, shotsTotal: 0, shotsHit: 0, powerupsCaught: 0, powerupsMissed: 0 };
+  let shotPending = false;
+  function resetStats() {
+    stats = { bestCombo: 0, bricksBroken: 0, brickHits: 0, paddleHits: 0, ballsLost: 0, shotsTotal: 0, shotsHit: 0, powerupsCaught: 0, powerupsMissed: 0 };
+    shotPending = false;
+  }
 
   try { best = parseInt(localStorage.getItem(BEST_KEY) || '0', 10) || 0; } catch (e) { best = 0; }
 
@@ -349,9 +377,16 @@
   const mult = () => Math.min(5, 1 + Math.floor(combo / 6));
   // Difficulty curve (backlog #13): ball speed ramps steeply with level and
   // with bricks broken this run; the combo window tightens on later levels.
-  const ballSpeed = () => Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * 36 + Math.min(120, bricksBrokenRun * 2));
+  // #10: BALL CONTROL stacks slow the ball 8% each (max 3).
+  const ballSpeed = () => Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * 36 + Math.min(120, bricksBrokenRun * 2)) * (1 - 0.08 * (upgradesOwned.control || 0));
   const comboWindow = () => Math.max(1.8, COMBO_WINDOW - (level - 1) * 0.12);
   const levelClearBonus = () => 100 * level;
+  // #10: permanent paddle width from WIDE PADDLE stacks (+18px each, max 3).
+  const paddleBaseW = () => PADDLE_W + 18 * (upgradesOwned.paddle || 0);
+  // #10: SCORE BOOST stacks add +25% brick score each (max 3).
+  const scoreMult = () => 1 + 0.25 * (upgradesOwned.score || 0);
+  // #11: share of paddle returns that went on to hit a brick.
+  const accuracy = () => (stats.shotsTotal ? Math.round((100 * stats.shotsHit) / stats.shotsTotal) : 100);
 
   function rr(x, y, w, h, r) {
     ctx.beginPath();
@@ -369,6 +404,7 @@
     levelOverlay.classList.add('hidden');
     gameOverOverlay.classList.add('hidden');
     introOverlay.classList.add('hidden');
+    draftOverlay.classList.add('hidden');
   }
 
   // Level intro card (backlog #25): named card, auto-dismisses after 1.7s.
@@ -398,7 +434,7 @@
     scoreEl.textContent = score;
     bestEl.textContent = Math.max(best, score);
     levelEl.textContent = level;
-    livesEl.textContent = '●'.repeat(Math.max(0, lives)) + '○'.repeat(Math.max(0, 3 - lives));
+    livesEl.textContent = '●'.repeat(Math.max(0, lives)) + '○'.repeat(Math.max(0, MAX_LIVES - lives));
     comboEl.textContent = '×' + mult();
     comboEl.style.color = combo > 0 ? '#b6ff00' : '';
     lastPowerText = powerText();
@@ -443,15 +479,26 @@
   }
 
   function resetBall() {
-    balls = [newBall(paddle.x + paddle.w / 2, PADDLE_Y - BALL_R - 1, 0, 0)];
+    // #10: TWIN LAUNCH serves one extra ball per stack, fanned out from
+    // the paddle center (ox offsets ride along in serving mode).
+    const n = 1 + (upgradesOwned.balls || 0);
+    balls = [];
+    for (let i = 0; i < n; i++) {
+      const b = newBall(paddle.x + paddle.w / 2, PADDLE_Y - BALL_R - 1, 0, 0);
+      b.ox = (i - (n - 1) / 2) * 22;
+      balls.push(b);
+    }
   }
 
   function launch() {
     if (mode !== 'serving') return;
     const speed = ballSpeed();
-    const angle = -Math.PI / 2 + (Math.random() * 0.5 - 0.25);
-    balls[0].vx = Math.cos(angle) * speed;
-    balls[0].vy = Math.sin(angle) * speed;
+    const n = balls.length;
+    balls.forEach((b, i) => {
+      const angle = -Math.PI / 2 + (i - (n - 1) / 2) * 0.18 + (Math.random() * 0.5 - 0.25);
+      b.vx = Math.cos(angle) * speed;
+      b.vy = Math.sin(angle) * speed;
+    });
     mode = 'playing';
     sfx.launch();
   }
@@ -482,8 +529,9 @@
       }
       floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'MULTI-BALL!', def.color);
     } else if (type === 'wide') {
-      paddle.w = PADDLE_WIDE_W;
-      paddle.x = clamp(paddle.x - (PADDLE_WIDE_W - PADDLE_W) / 2, 8, W - paddle.w - 8);
+      // Wide capsule: +48px over the (possibly upgraded) base width.
+      paddle.w = paddleBaseW() + 48;
+      paddle.x = clamp(paddle.x - 24, 8, W - paddle.w - 8);
       wideTimer = WIDE_DURATION;
       floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'WIDE PADDLE!', def.color);
     }
@@ -496,19 +544,26 @@
     for (let i = powerups.length - 1; i >= 0; i--) {
       const p = powerups[i];
       p.y += p.vy * dt;
+      // #10: MAGNET PADDLE pulls falling capsules toward the paddle.
+      const mag = upgradesOwned.magnet || 0;
+      if (mag > 0) {
+        const cx = paddle.x + paddle.w / 2;
+        p.x += clamp(cx - p.x, -1, 1) * 130 * mag * dt;
+      }
       if (p.y + 10 >= PADDLE_Y && p.y - 10 <= PADDLE_Y + PADDLE_H
         && p.x >= paddle.x - 6 && p.x <= paddle.x + paddle.w + 6) {
         powerups.splice(i, 1);
+        stats.powerupsCaught++; // #11
         activatePowerup(p.type);
         continue;
       }
-      if (p.y - 12 > H) powerups.splice(i, 1);
+      if (p.y - 12 > H) { powerups.splice(i, 1); stats.powerupsMissed++; } // #11
     }
     if (wideTimer > 0) {
       wideTimer -= dt;
       if (wideTimer <= 0) {
         wideTimer = 0;
-        paddle.w = PADDLE_W;
+        paddle.w = paddleBaseW();
         paddle.x = clamp(paddle.x, 8, W - paddle.w - 8);
       }
     }
@@ -551,7 +606,10 @@
     ensureAudio();
     score = 0; lives = 3; level = 1;
     combo = 0; comboTimer = 0; bricksBrokenRun = 0;
-    paddle.w = PADDLE_W;
+    upgradesOwned = {};
+    draftChoices = [];
+    resetStats();
+    paddle.w = paddleBaseW();
     wideTimer = 0;
     powerups = [];
     paddle.x = (W - paddle.w) / 2;
@@ -598,7 +656,7 @@
     const last = level >= LEVELS.length;
     levelTitle.textContent = last ? 'YOU BEAT THE VOID!' : 'LEVEL ' + level + ' CLEAR!';
     levelStats.innerHTML = '“' + (LEVEL_NAMES[level - 1] || '') + '” cleared &nbsp;·&nbsp; Clear bonus <strong>+' + bonus + '</strong><br>Score <strong>' + score + '</strong> &nbsp;·&nbsp; Best <strong>' + Math.max(best, score) + '</strong><br>Time ' + fmtTime(performance.now() - runStart);
-    nextLevelBtn.textContent = last ? 'SEE RESULTS ▶' : 'NEXT LEVEL ▶';
+    nextLevelBtn.textContent = last ? 'SEE RESULTS ▶' : 'DRAFT UPGRADE ▶';
     levelOverlay.classList.remove('hidden');
     updateHUD();
   }
@@ -609,13 +667,72 @@
     buildLevel(level);
     resetBall();
     combo = 0; comboTimer = 0;
-    paddle.w = PADDLE_W;
+    paddle.w = paddleBaseW();
     wideTimer = 0;
     powerups = [];
     levelOverlay.classList.add('hidden');
     showIntro(level);
     mode = 'serving';
     updateHUD();
+  }
+
+  // ---------- Upgrade draft (backlog #9, #10) ----------
+  // After a level clear (not the final one), the void offers 3 upgrades;
+  // pick 1 to keep for the rest of the run, then the next level starts.
+  // Click a card or press 1 / 2 / 3. Maxed-out upgrades leave the pool;
+  // when fewer than 3 remain, VOID CACHE (+500 score) fills the gaps.
+  function advanceFromClear() {
+    if (mode !== 'levelclear') return;
+    if (level >= LEVELS.length) { gameOver(true); return; }
+    openDraft();
+  }
+
+  function openDraft() {
+    const avail = Object.keys(UPGRADES).filter((id) => (upgradesOwned[id] || 0) < UPGRADES[id].max);
+    for (let i = avail.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = avail[i]; avail[i] = avail[j]; avail[j] = t;
+    }
+    draftChoices = avail.slice(0, 3);
+    while (draftChoices.length < 3) draftChoices.push('bonus');
+    draftCardsEl.innerHTML = '';
+    draftChoices.forEach((id, i) => {
+      const def = id === 'bonus' ? BONUS_UPGRADE : UPGRADES[id];
+      const owned = id === 'bonus' ? 0 : (upgradesOwned[id] || 0);
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'draft-card';
+      card.style.borderColor = def.color;
+      card.innerHTML = '<span class="draft-key">' + (i + 1) + '</span>'
+        + '<span class="draft-glyph" style="color:' + def.color + '">' + def.glyph + '</span>'
+        + '<span class="draft-name">' + def.name + '</span>'
+        + '<span class="draft-desc">' + def.desc + '</span>'
+        + (owned ? '<span class="draft-owned">OWNED ×' + owned + '</span>' : '');
+      card.addEventListener('click', () => applyUpgrade(id));
+      draftCardsEl.appendChild(card);
+    });
+    levelOverlay.classList.add('hidden');
+    mode = 'draft';
+    draftOverlay.classList.remove('hidden');
+  }
+
+  function applyUpgrade(id) {
+    if (mode !== 'draft') return;
+    if (id === 'bonus') {
+      score += 500;
+      floatText(W / 2, H / 2 - 40, '+500 VOID CACHE', BONUS_UPGRADE.color);
+    } else {
+      upgradesOwned[id] = (upgradesOwned[id] || 0) + 1;
+      const def = UPGRADES[id];
+      if (id === 'life') lives = Math.min(MAX_LIVES, lives + 1);
+      if (id === 'paddle') paddle.w = wideTimer > 0 ? paddleBaseW() + 48 : paddleBaseW();
+      floatText(W / 2, H / 2 - 40, def.name + '!', def.color);
+      burst(W / 2, H / 2 - 20, def.color, 24, 300);
+    }
+    sfx.powerup();
+    updateHUD();
+    draftOverlay.classList.add('hidden');
+    nextLevel();
   }
 
   function gameOver(win) {
@@ -625,7 +742,10 @@
     gameOverTitle.textContent = win ? 'VOID CONQUERED!' : 'GAME OVER';
     gameOverStats.innerHTML = (win ? 'You cleared all ' + LEVELS.length + ' levels.' : 'The void claims another run.')
       + '<br>Score <strong>' + score + '</strong> &nbsp;·&nbsp; Best <strong>' + best + '</strong>'
-      + '<br>Level reached: <strong>' + level + '</strong> &nbsp;·&nbsp; Time ' + fmtTime(performance.now() - runStart);
+      + '<br>Level reached: <strong>' + level + '</strong> &nbsp;·&nbsp; Time ' + fmtTime(performance.now() - runStart)
+      // #11: run stats — best combo, bricks broken, shot accuracy, powerups.
+      + '<br>Best combo <strong>×' + Math.max(1, stats.bestCombo) + '</strong> &nbsp;·&nbsp; Bricks <strong>' + stats.bricksBroken + '</strong> &nbsp;·&nbsp; Accuracy <strong>' + accuracy() + '%</strong>'
+      + '<br>Powerups caught <strong>' + stats.powerupsCaught + '</strong> &nbsp;·&nbsp; missed <strong>' + stats.powerupsMissed + '</strong>';
     hideOverlays();
     gameOverOverlay.classList.remove('hidden');
     updateHUD();
@@ -634,6 +754,8 @@
   function loseBall() {
     lives--;
     combo = 0; comboTimer = 0;
+    stats.ballsLost++;
+    shotPending = false; // the pending shot died with the ball
     shake = 12;
     sfx.voidSwallow(); // #34: the void swallows the ball, not a plain buzz
     burst(paddle.x + paddle.w / 2, H - 12, '#ff2d95', 26, 300);
@@ -720,6 +842,7 @@
         ball.vx = ball.vx / s2 * sp;
         ball.vy = ball.vy / s2 * sp;
         ball.y = PADDLE_Y - BALL_R - 0.5;
+        stats.paddleHits++; stats.shotsTotal++; shotPending = true; // #11
         sfx.paddle();
         burst(ball.x, PADDLE_Y, '#00f0ff', 6, 160);
       }
@@ -732,14 +855,19 @@
           || ball.y + BALL_R < b.y || ball.y - BALL_R > b.y + b.h) continue;
         if (!reflectOffBrick(b, ball)) continue;
         b.hp--;
+        // #11: every brick contact counts; a pending paddle shot is a hit.
+        stats.brickHits++;
+        if (shotPending) { stats.shotsHit++; shotPending = false; }
         const color = BRICK_COLORS[b.maxHp];
         if (b.hp <= 0) {
           b.alive = false;
           combo++;
+          stats.bestCombo = Math.max(stats.bestCombo, combo); // #11
           comboTimer = comboWindow();
           bricksBrokenRun++;
+          stats.bricksBroken++; // #11
           maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2);
-          const pts = BRICK_SCORE[b.maxHp] * mult();
+          const pts = Math.round(BRICK_SCORE[b.maxHp] * mult() * scoreMult()); // #10 score stacks
           score += pts;
           floatText(b.x + b.w / 2, b.y, '+' + pts + (mult() > 1 ? ' ×' + mult() : ''), color);
           burst(b.x + b.w / 2, b.y + b.h / 2, color, 14, 260);
@@ -851,10 +979,10 @@
         paddle.x = clamp(paddle.x, 8, W - paddle.w - 8);
       }
       paddleVel = (paddle.x - prevX) / Math.max(dt, 0.001);
-      if (balls[0]) {
-        balls[0].x = paddle.x + paddle.w / 2;
-        balls[0].y = PADDLE_Y - BALL_R - 1;
-        balls[0].trail = [];
+      for (const b of balls) {
+        b.x = paddle.x + paddle.w / 2 + (b.ox || 0);
+        b.y = PADDLE_Y - BALL_R - 1;
+        b.trail = [];
       }
     }
   }
@@ -1063,6 +1191,12 @@
     ensureAudio();
     if (e.repeat) return;
     keys.add(e.code);
+    // #9: draft picks by number key (1 / 2 / 3).
+    if (mode === 'draft') {
+      const idx = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code);
+      if (idx >= 0 && draftChoices[idx]) applyUpgrade(draftChoices[idx]);
+      return;
+    }
     if (e.code === 'Space') {
       if (mode === 'serving') launch();
       else if (mode === 'playing') pauseGame();
@@ -1073,7 +1207,7 @@
     if (e.code === 'Enter') {
       if (mode === 'menu') startRun();
       else if (mode === 'gameover') startRun();
-      else if (mode === 'levelclear') nextLevel();
+      else if (mode === 'levelclear') advanceFromClear();
     }
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -1087,7 +1221,7 @@
   $('playBtn').addEventListener('click', startRun);
   $('resumeBtn').addEventListener('click', resumeGame);
   $('restartBtnPause').addEventListener('click', startRun);
-  nextLevelBtn.addEventListener('click', nextLevel);
+  nextLevelBtn.addEventListener('click', advanceFromClear);
   $('againBtn').addEventListener('click', startRun);
   pauseBtn.addEventListener('click', () => { ensureAudio(); togglePause(); });
   muteBtn.addEventListener('click', () => { ensureAudio(); toggleMute(); });
