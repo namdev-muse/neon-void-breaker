@@ -1,0 +1,55 @@
+name: CI + Deploy Pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  validate:
+    name: Validate game
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check JavaScript syntax
+        run: node --check game.js
+      - name: Check required files exist
+        run: |
+          test -f index.html
+          test -f style.css
+          test -f game.js
+          test -f README.md
+          echo "All required files present."
+      - name: Check no placeholder markers in shipped game
+        run: |
+          if grep -R "TODO\|FIXME" game.js index.html style.css; then
+            echo "Found TODO/FIXME markers"
+            exit 1
+          fi
+          echo "No placeholders found."
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
