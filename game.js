@@ -124,6 +124,11 @@
   let particles = [];
   let texts = [];
   let shake = 0;
+  let hitStop = 0;   // #26: micro-freeze timer (seconds) after big breaks
+  let rings = [];    // #28: expanding shockwave rings
+  let flashes = [];  // #27: impact flashes over bricks just hit
+  const HITSTOP_MAX = 0.09;
+  const SHAKE_MAX = 14;
   let paddleVel = 0;
 
   const paddle = { x: (W - 96) / 2, w: 96, targetX: null };
@@ -416,6 +421,18 @@
     if (texts.length > 24) texts.shift();
   }
 
+  // #27: white-hot impact flash over a brick that was just hit.
+  function flashBrick(b, color) {
+    flashes.push({ x: b.x, y: b.y, w: b.w, h: b.h, color, life: 0.12, maxLife: 0.12 });
+    if (flashes.length > 24) flashes.shift();
+  }
+
+  // #28: expanding shockwave ring from a break point.
+  function ringBurst(x, y, color, maxR) {
+    rings.push({ x, y, r: 6, maxR, life: 0.4, maxLife: 0.4, color });
+    if (rings.length > 24) rings.shift();
+  }
+
   // ---------- Flow ----------
   function startRun() {
     ensureAudio();
@@ -428,7 +445,7 @@
     runStart = performance.now();
     buildLevel(level);
     resetBall();
-    particles = []; texts = []; shake = 0;
+    particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = [];
     hideOverlays();
     showIntro(level);
     mode = 'serving';
@@ -457,6 +474,11 @@
     saveBest();
     mode = 'levelclear';
     sfx.clear();
+    // Juice finale for the clear: big shockwave, a beat of hit-stop, heavy shake.
+    ringBurst(W / 2, 200, '#b6ff00', 240);
+    burst(W / 2, 200, '#b6ff00', 40, 420);
+    hitStop = HITSTOP_MAX;
+    shake = Math.min(SHAKE_MAX, shake + 8);
     const bonus = levelClearBonus();
     score += bonus;
     const last = level >= LEVELS.length;
@@ -533,13 +555,20 @@
     }
     ball.x = cx + nx * (BALL_R + 0.5);
     ball.y = cy + ny * (BALL_R + 0.5);
-    // Never let the ball go near-horizontal (boring endless loops).
+    // Never let the ball go near-horizontal (boring endless loops) or
+    // near-vertical (clears one column, then loops forever) — #48.
     const sp = Math.hypot(ball.vx, ball.vy) || ballSpeed();
     if (Math.abs(ball.vy) < sp * 0.22) {
       ball.vy = (ball.vy < 0 ? -1 : 1) * sp * 0.22;
       const s2 = Math.hypot(ball.vx, ball.vy);
       ball.vx = ball.vx / s2 * sp;
       ball.vy = ball.vy / s2 * sp;
+    }
+    if (Math.abs(ball.vx) < sp * 0.12) {
+      ball.vx = (ball.vx < 0 ? -1 : 1) * sp * 0.12;
+      const s3 = Math.hypot(ball.vx, ball.vy);
+      ball.vx = ball.vx / s3 * sp;
+      ball.vy = ball.vy / s3 * sp;
     }
     return true;
   }
@@ -566,7 +595,10 @@
         && ball.y + BALL_R >= PADDLE_Y && ball.y - BALL_R <= PADDLE_Y + PADDLE_H
         && ball.x >= paddle.x - BALL_R && ball.x <= paddle.x + paddle.w + BALL_R) {
         const hit = clamp((ball.x - paddle.x) / paddle.w, 0, 1) - 0.5;
-        const angle = hit * Math.PI * 0.78; // max ~70 degrees
+        let angle = hit * Math.PI * 0.78; // max ~70 degrees
+        // #48: never launch dead-vertical — a centered hit would loop the
+        // ball up and down one column forever. Keep its incoming drift.
+        if (Math.abs(angle) < 0.14) angle = 0.14 * (ball.vx >= 0 ? 1 : -1);
         const sp = Math.hypot(ball.vx, ball.vy);
         ball.vx = Math.sin(angle) * sp + paddleVel * 0.12;
         ball.vy = -Math.cos(angle) * sp;
@@ -597,13 +629,19 @@
           score += pts;
           floatText(b.x + b.w / 2, b.y, '+' + pts + (mult() > 1 ? ' ×' + mult() : ''), color);
           burst(b.x + b.w / 2, b.y + b.h / 2, color, 14, 260);
-          shake = Math.min(8, shake + 1.5 + b.maxHp);
+          flashBrick(b, color); // #27 impact flash
+          ringBurst(b.x + b.w / 2, b.y + b.h / 2, color, 60 + b.maxHp * 30); // #28 shockwave
+          hitStop = Math.min(HITSTOP_MAX, 0.03 + 0.015 * b.maxHp); // #26 micro freeze
+          // #30: shake scales with brick toughness and the combo multiplier.
+          shake = Math.min(SHAKE_MAX, shake + (1.5 + b.maxHp) * (1 + 0.25 * (mult() - 1)));
           sfx.brick(combo);
           updateHUD();
           if (bricks.every((bb) => !bb.alive)) { onLevelClear(); return 'clear'; }
         } else {
           score += 10;
           burst(b.x + b.w / 2, b.y + b.h / 2, color, 5, 160);
+          flashBrick(b, color); // #27: even a chip gets a flash
+          shake = Math.min(SHAKE_MAX, shake + 0.5);
           sfx.damage();
           updateHUD();
         }
@@ -647,6 +685,17 @@
       t.y -= 34 * dt;
       if (t.life <= 0) texts.splice(i, 1);
     }
+    // #28: rings expand to full radius over their life; #27: flashes fade fast.
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const r = rings[i];
+      r.life -= dt;
+      r.r = 6 + (1 - Math.max(0, r.life) / r.maxLife) * (r.maxR - 6);
+      if (r.life <= 0) rings.splice(i, 1);
+    }
+    for (let i = flashes.length - 1; i >= 0; i--) {
+      flashes[i].life -= dt;
+      if (flashes[i].life <= 0) flashes.splice(i, 1);
+    }
     shake *= Math.pow(0.001, dt);
     if (shake < 0.05) shake = 0;
 
@@ -671,7 +720,7 @@
       stepBalls(dt);
       for (const b of balls) {
         b.trail.push({ x: b.x, y: b.y });
-        if (b.trail.length > 10) b.trail.shift();
+        if (b.trail.length > 18) b.trail.shift(); // #27: longer trail
       }
       // Wide-paddle countdown ticks in the HUD once per second.
       const pt = powerText();
@@ -788,14 +837,16 @@
     ctx.restore();
 
     // Ball trails + balls (multi-ball draws every live ball).
+    // #27: longer, brighter trail — fades from the ball back to a ghost.
     if (mode !== 'menu') {
       for (const b of balls) {
         for (let i = 0; i < b.trail.length; i++) {
           const tp = b.trail[i];
-          ctx.globalAlpha = (i / b.trail.length) * 0.3;
+          const f = i / b.trail.length;
+          ctx.globalAlpha = f * 0.45;
           ctx.fillStyle = '#00f0ff';
           ctx.beginPath();
-          ctx.arc(tp.x, tp.y, BALL_R * (0.4 + 0.6 * i / b.trail.length), 0, Math.PI * 2);
+          ctx.arc(tp.x, tp.y, BALL_R * (0.35 + 0.65 * f), 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.globalAlpha = 1;
@@ -821,6 +872,37 @@
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // #27: impact flashes — additive glow over the brick just hit.
+    if (flashes.length) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (const f of flashes) {
+        const a = Math.max(0, f.life / f.maxLife);
+        ctx.globalAlpha = a * 0.7;
+        ctx.fillStyle = f.color;
+        rr(f.x - 2, f.y - 2, f.w + 4, f.h + 4, 6);
+        ctx.fill();
+        ctx.globalAlpha = a * 0.9;
+        ctx.fillStyle = '#ffffff';
+        rr(f.x + 2, f.y + 2, f.w - 4, f.h - 4, 4);
+        ctx.fill();
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    // #28: shockwave rings — expanding, thinning outlines.
+    for (const r of rings) {
+      const a = Math.max(0, r.life / r.maxLife);
+      ctx.globalAlpha = a * 0.9;
+      ctx.strokeStyle = r.color;
+      ctx.lineWidth = 1 + 3 * a;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.globalAlpha = 1;
 
@@ -908,6 +990,14 @@
   function frame(now) {
     const dt = Math.min(0.033, (now - last) / 1000);
     last = now;
+    if (hitStop > 0) {
+      // #26: freeze the simulation for a beat; keep rendering so the
+      // flash/ring/shake read as one frozen impact frame.
+      hitStop -= dt;
+      render(now / 1000);
+      requestAnimationFrame(frame);
+      return;
+    }
     update(dt);
     render(now / 1000);
     requestAnimationFrame(frame);
