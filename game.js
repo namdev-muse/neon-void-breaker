@@ -172,7 +172,102 @@
       master = actx.createGain();
       master.gain.value = 0.32;
       master.connect(actx.destination);
+      // #32: dedicated music bus (so SFX and music can be balanced separately).
+      musicGain = actx.createGain();
+      musicGain.gain.value = 0.42;
+      musicGain.connect(master);
+      // 1s white-noise buffer shared by hats, explosions and void whooshes.
+      noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      startMusic();
     } catch (e) { actx = null; }
+  }
+
+  // ---------- Music engine (#32, #33) ----------
+  // Lookahead scheduler: a 30ms timer schedules eighth-note steps ~0.15s
+  // ahead, so the loop stays tight even when the frame rate wobbles.
+  // Progression: Am – F – C – G, bass + arpeggio, all synthesized.
+  let musicGain = null, noiseBuf = null;
+  let musicTimer = null, musicStep = 0, musicNext = 0;
+  const MUSIC_BPM = 116;
+  const MUSIC_STEP = 60 / MUSIC_BPM / 2; // eighth notes
+  const MUSIC_CHORDS = [
+    [57, 60, 64], // Am
+    [53, 57, 60], // F
+    [48, 55, 60], // C
+    [55, 59, 62], // G
+  ];
+  const ARP_PATTERN = [0, 1, 2, 1, 0, 2, 1, 2];
+  const midiToFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+  function musicNote(freq, when, dur, type, gain) {
+    const osc = actx.createOscillator();
+    const g = actx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, when);
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(gain, when + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    osc.connect(g); g.connect(musicGain);
+    osc.start(when); osc.stop(when + dur + 0.05);
+  }
+
+  function noiseHit(when, dur, gain, dest) {
+    const src = actx.createBufferSource();
+    src.buffer = noiseBuf;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(gain, when + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    src.connect(g); g.connect(dest || musicGain);
+    src.start(when); src.stop(when + dur + 0.05);
+  }
+
+  // #33: intensity follows the combo multiplier (×1–×5). Higher combos add
+  // hats (×2), sparkle notes (×3) and a double-time arp echo (×4+), so the
+  // music audibly heats up as the run heats up.
+  function scheduleStep(step, when) {
+    const bar = Math.floor(step / 8) % MUSIC_CHORDS.length;
+    const chord = MUSIC_CHORDS[bar];
+    const inBar = step % 8;
+    const intensity = mult();
+    // Bass: root an octave down on beats 1 and 3 of the bar.
+    if (inBar === 0 || inBar === 4) {
+      musicNote(midiToFreq(chord[0] - 12), when, 0.42, 'triangle', 0.30);
+    }
+    // Arpeggio: one chord tone per eighth note, one octave up.
+    const arpTone = chord[ARP_PATTERN[inBar]];
+    musicNote(midiToFreq(arpTone + 12), when, 0.2, 'triangle', 0.11);
+    if (intensity >= 2 && inBar % 2 === 1) {
+      noiseHit(when, 0.04, 0.05); // hats on the offbeats
+    }
+    if (intensity >= 3 && (inBar === 2 || inBar === 6)) {
+      musicNote(midiToFreq(arpTone + 24), when, 0.14, 'sine', 0.07); // sparkle
+    }
+    if (intensity >= 4) {
+      // Double-time echo: the next arp tone lands halfway through the step.
+      const nextTone = chord[ARP_PATTERN[(inBar + 1) % 8]];
+      musicNote(midiToFreq(nextTone + 12), when + MUSIC_STEP / 2, 0.14, 'triangle', 0.06);
+    }
+  }
+
+  function scheduleMusic() {
+    if (!actx || !musicGain) return;
+    if (mode === 'paused') { musicNext = actx.currentTime + 0.05; return; }
+    if (muted) { musicNext = actx.currentTime + 0.05; return; }
+    while (musicNext < actx.currentTime + 0.15) {
+      scheduleStep(musicStep, musicNext);
+      musicStep++;
+      musicNext += MUSIC_STEP;
+    }
+  }
+
+  function startMusic() {
+    if (musicTimer || !actx) return;
+    musicStep = 0;
+    musicNext = actx.currentTime + 0.06;
+    musicTimer = setInterval(scheduleMusic, 30);
   }
 
   function tone(freq, opts) {
@@ -208,6 +303,23 @@
       tone(320, { dur: 0.22, type: 'sawtooth', gain: 0.3, slideTo: 90 });
       tone(160, { dur: 0.3, type: 'triangle', gain: 0.25, slideTo: 60, delay: 0.08 });
     },
+    // #34: the void swallows a lost ball — a long downward whoosh.
+    voidSwallow() {
+      tone(620, { dur: 0.6, type: 'sine', gain: 0.4, slideTo: 55 });
+      tone(310, { dur: 0.5, type: 'triangle', gain: 0.2, slideTo: 40, delay: 0.05 });
+      if (actx && !muted) noiseHit(actx.currentTime, 0.45, 0.16, master);
+    },
+    // #34: laser zap — reserved for the laser paddle powerup (#3).
+    laser() {
+      tone(1500, { dur: 0.12, type: 'square', gain: 0.22, slideTo: 190 });
+      tone(2900, { dur: 0.07, type: 'sawtooth', gain: 0.1, slideTo: 900 });
+    },
+    // #34: explosion — noise burst plus a low sub drop.
+    explosion() {
+      if (actx && !muted) noiseHit(actx.currentTime, 0.5, 0.3, master);
+      tone(130, { dur: 0.5, type: 'sawtooth', gain: 0.4, slideTo: 38 });
+      tone(65, { dur: 0.55, type: 'sine', gain: 0.35, slideTo: 30, delay: 0.03 });
+    },
     clear() {
       [523, 659, 784, 1047].forEach((f, i) => tone(f, { dur: 0.16, type: 'triangle', gain: 0.32, delay: i * 0.09 }));
     },
@@ -218,7 +330,8 @@
       [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, { dur: 0.2, type: 'triangle', gain: 0.32, delay: i * 0.1 }));
     },
     powerup() {
-      [660, 880, 1320].forEach((f, i) => tone(f, { dur: 0.12, type: 'triangle', gain: 0.3, delay: i * 0.06 }));
+      // #34: brighter rising arpeggio so a catch reads instantly.
+      [660, 880, 1320, 1760].forEach((f, i) => tone(f, { dur: 0.12, type: 'triangle', gain: 0.3, delay: i * 0.06 }));
     },
   };
 
@@ -477,6 +590,7 @@
     // Juice finale for the clear: big shockwave, a beat of hit-stop, heavy shake.
     ringBurst(W / 2, 200, '#b6ff00', 240);
     burst(W / 2, 200, '#b6ff00', 40, 420);
+    sfx.explosion(); // #34: the clear lands with a low boom under the fanfare
     hitStop = HITSTOP_MAX;
     shake = Math.min(SHAKE_MAX, shake + 8);
     const bonus = levelClearBonus();
@@ -521,7 +635,7 @@
     lives--;
     combo = 0; comboTimer = 0;
     shake = 12;
-    sfx.lose();
+    sfx.voidSwallow(); // #34: the void swallows the ball, not a plain buzz
     burst(paddle.x + paddle.w / 2, H - 12, '#ff2d95', 26, 300);
     updateHUD();
     if (lives <= 0) { gameOver(false); return; }

@@ -25,6 +25,7 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 - Combo multiplier with decay timer + on-screen combo bar
 - Juice: particles, screen shake that scales with break size and combo, hit-stop freeze frames, impact flashes, shockwave rings, long ball trail, floating score popups
 - Synthesized Web Audio sound effects (zero audio files)
+- Background music loop: synth arpeggio (Am–F–C–G) with bass and hats that intensify as your combo multiplier climbs (Block 5)
 - High score saved locally, auto-pause when the tab hides
 - Fully responsive — desktop and mobile, no build step
 
