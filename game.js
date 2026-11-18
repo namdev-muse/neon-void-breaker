@@ -9,7 +9,7 @@
   const PADDLE_SPEED = 560;
   const BALL_R = 8;
   const BASE_SPEED = 380;
-  const MAX_SPEED = 640;
+  const MAX_SPEED = 680;
   const COMBO_WINDOW = 2.5;
   const BEST_KEY = 'nvb-best';
   const MUTE_KEY = 'nvb-muted';
@@ -40,6 +40,52 @@
       '333333333333',
       '111111111111',
     ],
+    // Level 4 — STARFORGE: a heavy armored frame around a soft core.
+    [
+      '333333333333',
+      '2..........2',
+      '211111111112',
+      '212222222212',
+      '212333333212',
+      '212222222212',
+      '211111111112',
+    ],
+    // Level 5 — GRAVITY WELL: concentric rings, the void pulls inward.
+    [
+      '333333333333',
+      '3..........3',
+      '3.22222222.3',
+      '3.21111112.3',
+      '3.21333312.3',
+      '3.21111112.3',
+      '3.22222222.3',
+      '3..........3',
+      '333333333333',
+    ],
+    // Level 6 — THE CORE: the densest wall in the void. Bring your best combo.
+    [
+      '333333333333',
+      '222222222222',
+      '233333333332',
+      '231111111132',
+      '231233332132',
+      '231111111132',
+      '233333333332',
+      '222222222222',
+    ],
+  ];
+  // Level names + flavor lines shown on the intro card (backlog #25).
+  const LEVEL_NAMES = [
+    'FIRST CONTACT', 'NEBULA CROSS', 'VOID SPIRE',
+    'STARFORGE', 'GRAVITY WELL', 'THE CORE',
+  ];
+  const LEVEL_FLAVOR = [
+    'Warm up your paddle. The void is watching.',
+    'The nebula bends. Trust your angles.',
+    'The spire hums with void energy.',
+    'Armored shell, soft heart. Crack it open.',
+    'Rings within rings — the pull grows stronger.',
+    'The final wall. Break the Core, break the void.',
   ];
   const BRICK_COLORS = { 1: '#00f0ff', 2: '#ff2d95', 3: '#ffb300' };
   const BRICK_SCORE = { 1: 50, 2: 100, 3: 150 };
@@ -52,6 +98,8 @@
   const livesEl = $('lives'), comboEl = $('combo');
   const menuOverlay = $('menuOverlay'), pauseOverlay = $('pauseOverlay');
   const levelOverlay = $('levelOverlay'), gameOverOverlay = $('gameOverOverlay');
+  const introOverlay = $('introOverlay');
+  const introLevel = $('introLevel'), introName = $('introName'), introFlavor = $('introFlavor');
   const levelTitle = $('levelTitle'), levelStats = $('levelStats');
   const gameOverTitle = $('gameOverTitle'), gameOverStats = $('gameOverStats');
   const nextLevelBtn = $('nextLevelBtn');
@@ -166,7 +214,11 @@
   // ---------- Helpers ----------
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const mult = () => Math.min(5, 1 + Math.floor(combo / 6));
-  const ballSpeed = () => Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * 30 + Math.min(120, bricksBrokenRun * 2));
+  // Difficulty curve (backlog #13): ball speed ramps steeply with level and
+  // with bricks broken this run; the combo window tightens on later levels.
+  const ballSpeed = () => Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * 36 + Math.min(120, bricksBrokenRun * 2));
+  const comboWindow = () => Math.max(1.8, COMBO_WINDOW - (level - 1) * 0.12);
+  const levelClearBonus = () => 100 * level;
 
   function rr(x, y, w, h, r) {
     ctx.beginPath();
@@ -183,6 +235,22 @@
     pauseOverlay.classList.add('hidden');
     levelOverlay.classList.add('hidden');
     gameOverOverlay.classList.add('hidden');
+    introOverlay.classList.add('hidden');
+  }
+
+  // Level intro card (backlog #25): named card, auto-dismisses after 1.7s.
+  // Non-blocking — the player can still launch while it fades.
+  let introTimer = null;
+  function showIntro(n) {
+    if (introTimer) { clearTimeout(introTimer); introTimer = null; }
+    introLevel.textContent = 'LEVEL ' + n;
+    introName.textContent = LEVEL_NAMES[n - 1] || ('LEVEL ' + n);
+    introFlavor.textContent = LEVEL_FLAVOR[n - 1] || '';
+    introOverlay.classList.remove('hidden');
+    introTimer = setTimeout(() => {
+      introOverlay.classList.add('hidden');
+      introTimer = null;
+    }, 1700);
   }
 
   function updateHUD() {
@@ -276,6 +344,7 @@
     resetBall();
     particles = []; texts = []; shake = 0;
     hideOverlays();
+    showIntro(level);
     mode = 'serving';
     updateHUD();
   }
@@ -302,9 +371,11 @@
     saveBest();
     mode = 'levelclear';
     sfx.clear();
+    const bonus = levelClearBonus();
+    score += bonus;
     const last = level >= LEVELS.length;
     levelTitle.textContent = last ? 'YOU BEAT THE VOID!' : 'LEVEL ' + level + ' CLEAR!';
-    levelStats.innerHTML = 'Score <strong>' + score + '</strong> &nbsp;·&nbsp; Best <strong>' + Math.max(best, score) + '</strong><br>Time ' + fmtTime(performance.now() - runStart);
+    levelStats.innerHTML = '“' + (LEVEL_NAMES[level - 1] || '') + '” cleared &nbsp;·&nbsp; Clear bonus <strong>+' + bonus + '</strong><br>Score <strong>' + score + '</strong> &nbsp;·&nbsp; Best <strong>' + Math.max(best, score) + '</strong><br>Time ' + fmtTime(performance.now() - runStart);
     nextLevelBtn.textContent = last ? 'SEE RESULTS ▶' : 'NEXT LEVEL ▶';
     levelOverlay.classList.remove('hidden');
     updateHUD();
@@ -317,6 +388,7 @@
     resetBall();
     combo = 0; comboTimer = 0;
     levelOverlay.classList.add('hidden');
+    showIntro(level);
     mode = 'serving';
     updateHUD();
   }
@@ -427,7 +499,7 @@
         if (b.hp <= 0) {
           b.alive = false;
           combo++;
-          comboTimer = COMBO_WINDOW;
+          comboTimer = comboWindow();
           bricksBrokenRun++;
           const pts = BRICK_SCORE[b.maxHp] * mult();
           score += pts;
@@ -539,7 +611,7 @@
 
     // Combo timer bar (only while a combo is alive).
     if (mode === 'playing' && combo > 0) {
-      const w = (comboTimer / COMBO_WINDOW) * (W - 72);
+      const w = (comboTimer / comboWindow()) * (W - 72);
       ctx.fillStyle = 'rgba(182,255,0,0.25)';
       ctx.fillRect(36, 56, W - 72, 4);
       ctx.fillStyle = '#b6ff00';
