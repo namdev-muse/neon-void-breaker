@@ -217,12 +217,25 @@
   // touch the ball — without this, a ball swallowed by the well respawns
   // on a paddle parked under the well and feeds itself straight back in.
   let wideTimer = 0;   // seconds of wide paddle remaining
+  // #3/#4/#5 (Block 11): laser paddle, slow-mo ball, shield net.
+  let laserTimer = 0;    // seconds of laser paddle remaining
+  let laserCooldown = 0; // seconds until the next bolt may fire
+  let slowTimer = 0;     // seconds of slow-mo remaining
+  let shieldActive = false; // one free save at the bottom net
+  let bolts = [];        // live laser bolts {x, y}
+  const LASER_DURATION = 12, LASER_COOLDOWN = 0.22, LASER_SPEED = 900;
+  const LASER_COLOR = '#ff5c5c', MAX_BOLTS = 6;
+  const SLOW_DURATION = 10, SLOW_FACTOR = 0.6;
+  const SHIELD_COLOR = '#00ffa3';
   let lastPowerText = '—';
 
-  // Powerup defs (backlog #1, #2, #7): glyph drawn on the capsule.
+  // Powerup defs (backlog #1, #2, #3, #4, #5, #7): glyph drawn on the capsule.
   const POWERUP_TYPES = {
     multi: { label: 'MULTI-BALL', color: '#b6ff00', glyph: 'M' },
     wide: { label: 'WIDE PADDLE', color: '#00f0ff', glyph: 'W' },
+    laser: { label: 'LASER PADDLE', color: LASER_COLOR, glyph: 'L' },
+    slow: { label: 'SLOW-MO', color: '#8b5cff', glyph: 'S' },
+    shield: { label: 'SHIELD', color: SHIELD_COLOR, glyph: '◈' },
   };
   const POWERUP_DROP_CHANCE = 0.12; // per brick destroyed
   const MAX_BALLS = 5;
@@ -429,6 +442,10 @@
       tone(130, { dur: 0.5, type: 'sawtooth', gain: 0.4, slideTo: 38 });
       tone(65, { dur: 0.55, type: 'sine', gain: 0.35, slideTo: 30, delay: 0.03 });
     },
+    // #5: the shield net catches a ball — a bright rising chord.
+    shield() {
+      [880, 1174, 1568].forEach((f, i) => tone(f, { dur: 0.14, type: 'triangle', gain: 0.3, delay: i * 0.05 }));
+    },
     clear() {
       [523, 659, 784, 1047].forEach((f, i) => tone(f, { dur: 0.16, type: 'triangle', gain: 0.32, delay: i * 0.09 }));
     },
@@ -459,7 +476,8 @@
   // Difficulty curve (backlog #13): ball speed ramps steeply with level and
   // with bricks broken this run; the combo window tightens on later levels.
   // #10: BALL CONTROL stacks slow the ball 8% each (max 3).
-  const ballSpeed = () => Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * 36 + Math.min(120, bricksBrokenRun * 2)) * (1 - 0.08 * (upgradesOwned.control || 0));
+  // #4: SLOW-MO multiplies the speed by 0.6 while its timer runs.
+  const ballSpeed = () => Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * 36 + Math.min(120, bricksBrokenRun * 2)) * (1 - 0.08 * (upgradesOwned.control || 0)) * (slowTimer > 0 ? SLOW_FACTOR : 1);
   const comboWindow = () => Math.max(1.8, COMBO_WINDOW - (level - 1) * 0.12);
   const levelClearBonus = () => 100 * level;
   // #10: permanent paddle width from WIDE PADDLE stacks (+18px each, max 3).
@@ -503,10 +521,13 @@
     }, 1700);
   }
 
-  // Active-powerup line for the HUD (backlog #7): wide timer + ball count.
+  // Active-powerup line for the HUD (backlog #7, #8): timers + shield + balls.
   function powerText() {
     const parts = [];
     if (wideTimer > 0) parts.push('WIDE ' + Math.ceil(wideTimer) + 's');
+    if (laserTimer > 0) parts.push('LASER ' + Math.ceil(laserTimer) + 's');
+    if (slowTimer > 0) parts.push('SLOW ' + Math.ceil(slowTimer) + 's');
+    if (shieldActive) parts.push('SHIELD');
     if (balls.length > 1) parts.push('×' + balls.length + ' BALLS');
     return parts.length ? parts.join(' · ') : '—';
   }
@@ -709,7 +730,9 @@
   function maybeDropPowerup(x, y, chance) {
     if (powerups.length >= 3) return;
     if (Math.random() >= (chance || POWERUP_DROP_CHANCE)) return;
-    const type = Math.random() < 0.5 ? 'multi' : 'wide';
+    // #3/#4/#5: five capsule types, weighted — multi and laser most common.
+    const r = Math.random();
+    const type = r < 0.25 ? 'multi' : r < 0.45 ? 'wide' : r < 0.65 ? 'laser' : r < 0.8 ? 'slow' : 'shield';
     powerups.push({ x, y, type, vy: 150 });
   }
 
@@ -734,6 +757,28 @@
       paddle.x = clamp(paddle.x - 24, 8, W - paddle.w - 8);
       wideTimer = WIDE_DURATION;
       floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'WIDE PADDLE!', def.color);
+    } else if (type === 'laser') {
+      // #3: laser paddle for 12s — Space fires a bolt while it lasts
+      // (Space pauses instead when no laser is active; P / Esc still pause).
+      laserTimer = LASER_DURATION;
+      laserCooldown = 0;
+      floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'LASER PADDLE!', def.color);
+    } else if (type === 'slow') {
+      // #4: slow-mo for 10s — every live ball drops to 0.6x speed now;
+      // the expiry rescale in updatePowerups restores the full speed.
+      // Idempotent: re-catching slow-mo while it is already active only
+      // refreshes the timer — rescaling again would compound to 0.36x,
+      // 0.216x… and the single expiry rescale could never undo it.
+      if (slowTimer <= 0) {
+        for (const b of balls) { b.vx *= SLOW_FACTOR; b.vy *= SLOW_FACTOR; }
+      }
+      slowTimer = SLOW_DURATION;
+      floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'SLOW-MO!', def.color);
+    } else if (type === 'shield') {
+      // #5: the shield net arms — it catches the next ball that would
+      // otherwise fall off the bottom, once, then it is spent.
+      shieldActive = true;
+      floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'SHIELD UP!', def.color);
     }
     burst(paddle.x + paddle.w / 2, PADDLE_Y, def.color, 16, 240);
     sfx.powerup();
@@ -766,6 +811,60 @@
         paddle.w = paddleBaseW();
         paddle.x = clamp(paddle.x, 8, W - paddle.w - 8);
       }
+    }
+    // #3: the laser timer and the per-shot cooldown tick down together.
+    if (laserTimer > 0) {
+      laserTimer -= dt;
+      if (laserTimer <= 0) laserTimer = 0;
+    }
+    if (laserCooldown > 0) laserCooldown -= dt;
+    // #4: when slow-mo expires, restore every live ball to full speed.
+    // (Balls launched, split or bounced during slow-mo all fly at 0.6x,
+    // so one uniform rescale is exact — no ball keeps the slow speed.)
+    if (slowTimer > 0) {
+      slowTimer -= dt;
+      if (slowTimer <= 0) {
+        slowTimer = 0;
+        for (const b of balls) { b.vx /= SLOW_FACTOR; b.vy /= SLOW_FACTOR; }
+      }
+    }
+  }
+
+  // #3: fire one laser bolt from the paddle's top edge. Capped at 6 live
+  // bolts and a 0.22s cooldown so holding Space can't fill the screen.
+  function fireLaser() {
+    if (mode !== 'playing' || laserTimer <= 0 || laserCooldown > 0) return;
+    if (bolts.length >= MAX_BOLTS) return;
+    laserCooldown = LASER_COOLDOWN;
+    bolts.push({ x: paddle.x + paddle.w / 2, y: PADDLE_Y - 10 });
+    burst(paddle.x + paddle.w / 2, PADDLE_Y - 8, LASER_COLOR, 4, 140);
+    sfx.laser();
+  }
+
+  // #3: bolts fly straight up and damage the first brick they touch
+  // (1 HP per bolt — elite rows and the Void Core take several). A bolt
+  // that clears the last brick ends the level exactly like a ball would.
+  function updateLasers(dt) {
+    for (let i = bolts.length - 1; i >= 0; i--) {
+      const b = bolts[i];
+      b.y -= LASER_SPEED * dt;
+      if (b.y < 0) { bolts.splice(i, 1); continue; }
+      let hit = false;
+      for (let j = 0; j < bricks.length; j++) {
+        const br = bricks[j];
+        if (!br.alive) continue;
+        // The bolt is drawn 4px wide but collides 8px wide: the gaps
+        // between brick columns are 6px, so a point-thin bolt fired from
+        // dead center of a gap would sail straight through the whole wall
+        // without touching a brick (the isolation test caught this).
+        if (b.x + 4 < br.x || b.x - 4 > br.x + br.w || b.y < br.y || b.y > br.y + br.h) continue;
+        const res = damageBrick(br);
+        bolts.splice(i, 1);
+        hit = true;
+        if (res === 'clear') return; // level cleared — stop mid-update
+        break;
+      }
+      if (hit) continue;
     }
   }
 
@@ -815,8 +914,14 @@
     resetStats();
     paddle.w = paddleBaseW();
     wideTimer = 0;
+    laserTimer = 0; laserCooldown = 0; slowTimer = 0; shieldActive = false; // #3/#4/#5
+    bolts = [];
     powerups = [];
     paddle.x = (W - paddle.w) / 2;
+    paddle.targetX = null; // #45: a stale mouse/touch target from the last
+    // run would yank the paddle (and the glued ball) sideways on the fresh
+    // serve — the bot caught a 40px/frame jump on restart. Center it and
+    // wait for the player to move.
     runStart = performance.now();
     buildLevel(level);
     resetBall();
@@ -861,8 +966,12 @@
     resetStats();
     paddle.w = paddleBaseW();
     wideTimer = 0;
+    laserTimer = 0; laserCooldown = 0; slowTimer = 0; shieldActive = false; // #3/#4/#5
+    bolts = [];
     powerups = [];
     paddle.x = (W - paddle.w) / 2;
+    paddle.targetX = null; // #45: same stale-target jump as startRun — the
+    // paddle must stay centered on the menu, not slide to the last mouse spot.
     buildLevel(level);
     resetBall();
     particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = [];
@@ -912,6 +1021,10 @@
     combo = 0; comboTimer = 0;
     paddle.w = paddleBaseW();
     wideTimer = 0;
+    // #3/#4: timed powerups don't carry between levels (like WIDE); the
+    // shield (#5) is a charge, not a timer, so it stays armed until used.
+    laserTimer = 0; laserCooldown = 0; slowTimer = 0;
+    bolts = [];
     powerups = [];
     levelOverlay.classList.add('hidden');
     showIntro(level);
@@ -1082,14 +1195,91 @@
     return true;
   }
 
+  // Shared brick-damage path: ball hits (stepBall) and laser bolts (#3)
+  // both route through here, so a brick breaks the same way whoever hit
+  // it. Returns 'clear' when the last brick fell (the level-clear overlay
+  // is already up by then), 'boss' when the Void Core just woke, else 'ok'.
+  function damageBrick(b) {
+    b.hp--;
+    // #20 / #24: elite bricks glow violet, the Void Core glows red.
+    const color = b.boss ? BOSS_COLOR : BRICK_COLORS[b.maxHp];
+    if (b.hp <= 0) {
+      b.alive = false;
+      combo++;
+      stats.bestCombo = Math.max(stats.bestCombo, combo); // #11
+      comboTimer = comboWindow();
+      bricksBrokenRun++;
+      stats.bricksBroken++; // #11
+      // #20: elite bricks drop powerups twice as often.
+      maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2, b.elite ? ELITE_DROP_CHANCE : undefined);
+      // #24: the Core is worth 1500; everything else uses its table score.
+      const pts = b.boss
+        ? Math.round(BOSS_SCORE * mult() * scoreMult())
+        : Math.round(BRICK_SCORE[b.maxHp] * mult() * scoreMult()); // #10 score stacks
+      score += pts;
+      floatText(b.x + b.w / 2, b.y, '+' + pts + (mult() > 1 ? ' ×' + mult() : ''), color);
+      burst(b.x + b.w / 2, b.y + b.h / 2, color, 14, 260);
+      flashBrick(b, color); // #27 impact flash
+      ringBurst(b.x + b.w / 2, b.y + b.h / 2, color, 60 + b.maxHp * 30); // #28 shockwave
+      hitStop = Math.min(HITSTOP_MAX, 0.03 + 0.015 * b.maxHp); // #26 micro freeze
+      // #30: shake scales with brick toughness and the combo multiplier.
+      shake = Math.min(SHAKE_MAX, shake + (1.5 + b.maxHp) * (1 + 0.25 * (mult() - 1)));
+      if (b.boss) {
+        // #24: breaking the Core is the run's biggest moment so far.
+        sfx.explosion();
+        ringBurst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 300);
+        burst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 40, 480);
+        floatText(W / 2, 200, 'VOID CORE DESTROYED!', BOSS_COLOR);
+        boss = null;
+      } else {
+        sfx.brick(combo);
+      }
+      updateHUD();
+      if (bricks.every((bb) => !bb.alive)) {
+        // #24: on level 5 the Core wakes instead of clearing — the
+        // level only ends once the boss itself is destroyed.
+        if (level === BOSS_LEVEL && !bossSpawned) { spawnBoss(); return 'boss'; }
+        onLevelClear(); return 'clear';
+      }
+      return 'ok';
+    }
+    score += 10;
+    burst(b.x + b.w / 2, b.y + b.h / 2, color, 5, 160);
+    flashBrick(b, color); // #27: even a chip gets a flash
+    shake = Math.min(SHAKE_MAX, shake + 0.5);
+    sfx.damage();
+    updateHUD();
+    return 'ok';
+  }
+
   // Steps one ball; returns 'lost' if it fell off the bottom, 'clear' if the
   // last brick broke, 'stop' if the mode changed mid-step, else 'ok'.
+  // #47: substep size — half the ball radius (4px). The thinnest collider
+  // is the paddle (12px tall), then the event horizon (24px across) and
+  // the bricks (22px tall): a 4px step can never jump any of them, so the
+  // ball cannot tunnel through a wall, brick, paddle or well in one step,
+  // even at MAX_SPEED (680px/s => ~11px/frame at 60fps, ~3 substeps).
+  const STEP_PX = BALL_R / 2;
+
   function stepBall(dt, ball) {
     const speed = Math.hypot(ball.vx, ball.vy) || ballSpeed();
     const dist = speed * dt;
-    const steps = Math.max(1, Math.ceil(dist / 4));
+    const steps = Math.max(1, Math.ceil(dist / STEP_PX));
     const sdt = dt / steps;
     for (let s = 0; s < steps; s++) {
+      // #48: a corrupted velocity (NaN from a bad bounce, or a dead stop)
+      // would freeze the ball or fling it off-screen — relaunch it upward
+      // at the current level speed instead of trusting the bad vector.
+      if (!Number.isFinite(ball.vx) || !Number.isFinite(ball.vy)
+        || !Number.isFinite(ball.x) || !Number.isFinite(ball.y)
+        || (ball.vx === 0 && ball.vy === 0)) {
+        ball.x = clamp(paddle.x + paddle.w / 2, BALL_R, W - BALL_R);
+        ball.y = PADDLE_Y - BALL_R - 1;
+        const sp = ballSpeed();
+        ball.vx = sp * 0.2;
+        ball.vy = -sp * 0.98;
+      }
+      const px = ball.x, py = ball.y; // pre-move position, for the swept paddle test
       ball.x += ball.vx * sdt;
       ball.y += ball.vy * sdt;
 
@@ -1124,12 +1314,46 @@
       if (ball.x < BALL_R) { ball.x = BALL_R; ball.vx = Math.abs(ball.vx); sfx.wall(); burst(ball.x, ball.y, '#00f0ff', 3, 120); }
       if (ball.x > W - BALL_R) { ball.x = W - BALL_R; ball.vx = -Math.abs(ball.vx); sfx.wall(); burst(ball.x, ball.y, '#00f0ff', 3, 120); }
       if (ball.y < BALL_R) { ball.y = BALL_R; ball.vy = Math.abs(ball.vy); sfx.wall(); burst(ball.x, ball.y, '#00f0ff', 3, 120); }
+      // #5: the shield net catches a ball that would otherwise be lost —
+      // one save, then the net is spent. The ball bounces straight back
+      // up off the bottom edge with its horizontal drift kept.
+      if (shieldActive && ball.vy > 0 && ball.y + BALL_R >= H) {
+        shieldActive = false;
+        ball.y = H - BALL_R - 1;
+        ball.vy = -Math.abs(ball.vy);
+        floatText(ball.x, H - 40, 'SHIELD SAVED!', SHIELD_COLOR);
+        burst(ball.x, H - 6, SHIELD_COLOR, 20, 260);
+        ringBurst(ball.x, H - 6, SHIELD_COLOR, 80);
+        shake = Math.min(SHAKE_MAX, shake + 4);
+        sfx.shield();
+        updateHUD();
+      }
       if (ball.y - BALL_R > H) return 'lost';
 
-      // Paddle (only while moving down).
-      if (ball.vy > 0
+      // Paddle (only while moving down). Two tests, belt and braces:
+      // (a) swept — did the ball's bottom edge cross the paddle's top
+      // edge this substep? This catches a fast ball that would otherwise
+      // land past the paddle between samples (#47: tunneling). The
+      // crossing x is interpolated along the substep segment.
+      // (b) overlap — the ball is already touching the paddle (e.g. a
+      // well bend pushed it down onto the paddle mid-step).
+      let paddleHit = false;
+      if (ball.vy > 0 && py + BALL_R <= PADDLE_Y && ball.y + BALL_R >= PADDLE_Y) {
+        const denom = (ball.y + BALL_R) - (py + BALL_R);
+        const t = denom > 0 ? (PADDLE_Y - (py + BALL_R)) / denom : 0;
+        const crossX = px + (ball.x - px) * t;
+        if (crossX >= paddle.x - BALL_R && crossX <= paddle.x + paddle.w + BALL_R) {
+          ball.x = crossX;
+          ball.y = PADDLE_Y - BALL_R - 0.5;
+          paddleHit = true;
+        }
+      }
+      if (!paddleHit && ball.vy > 0
         && ball.y + BALL_R >= PADDLE_Y && ball.y - BALL_R <= PADDLE_Y + PADDLE_H
         && ball.x >= paddle.x - BALL_R && ball.x <= paddle.x + paddle.w + BALL_R) {
+        paddleHit = true;
+      }
+      if (paddleHit) {
         const hit = clamp((ball.x - paddle.x) / paddle.w, 0, 1) - 0.5;
         let angle = hit * Math.PI * 0.78; // max ~70 degrees
         // #48: never launch dead-vertical — a centered hit would loop the
@@ -1154,58 +1378,10 @@
         if (ball.x + BALL_R < b.x || ball.x - BALL_R > b.x + b.w
           || ball.y + BALL_R < b.y || ball.y - BALL_R > b.y + b.h) continue;
         if (!reflectOffBrick(b, ball)) continue;
-        b.hp--;
         // #11: every brick contact counts; a pending paddle shot is a hit.
         stats.brickHits++;
         if (shotPending) { stats.shotsHit++; shotPending = false; }
-        // #20 / #24: elite bricks glow violet, the Void Core glows red.
-        const color = b.boss ? BOSS_COLOR : BRICK_COLORS[b.maxHp];
-        if (b.hp <= 0) {
-          b.alive = false;
-          combo++;
-          stats.bestCombo = Math.max(stats.bestCombo, combo); // #11
-          comboTimer = comboWindow();
-          bricksBrokenRun++;
-          stats.bricksBroken++; // #11
-          // #20: elite bricks drop powerups twice as often.
-          maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2, b.elite ? ELITE_DROP_CHANCE : undefined);
-          // #24: the Core is worth 1500; everything else uses its table score.
-          const pts = b.boss
-            ? Math.round(BOSS_SCORE * mult() * scoreMult())
-            : Math.round(BRICK_SCORE[b.maxHp] * mult() * scoreMult()); // #10 score stacks
-          score += pts;
-          floatText(b.x + b.w / 2, b.y, '+' + pts + (mult() > 1 ? ' ×' + mult() : ''), color);
-          burst(b.x + b.w / 2, b.y + b.h / 2, color, 14, 260);
-          flashBrick(b, color); // #27 impact flash
-          ringBurst(b.x + b.w / 2, b.y + b.h / 2, color, 60 + b.maxHp * 30); // #28 shockwave
-          hitStop = Math.min(HITSTOP_MAX, 0.03 + 0.015 * b.maxHp); // #26 micro freeze
-          // #30: shake scales with brick toughness and the combo multiplier.
-          shake = Math.min(SHAKE_MAX, shake + (1.5 + b.maxHp) * (1 + 0.25 * (mult() - 1)));
-          if (b.boss) {
-            // #24: breaking the Core is the run's biggest moment so far.
-            sfx.explosion();
-            ringBurst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 300);
-            burst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 40, 480);
-            floatText(W / 2, 200, 'VOID CORE DESTROYED!', BOSS_COLOR);
-            boss = null;
-          } else {
-            sfx.brick(combo);
-          }
-          updateHUD();
-          if (bricks.every((bb) => !bb.alive)) {
-            // #24: on level 5 the Core wakes instead of clearing — the
-            // level only ends once the boss itself is destroyed.
-            if (level === BOSS_LEVEL && !bossSpawned) { spawnBoss(); }
-            else { onLevelClear(); return 'clear'; }
-          }
-        } else {
-          score += 10;
-          burst(b.x + b.w / 2, b.y + b.h / 2, color, 5, 160);
-          flashBrick(b, color); // #27: even a chip gets a flash
-          shake = Math.min(SHAKE_MAX, shake + 0.5);
-          sfx.damage();
-          updateHUD();
-        }
+        if (damageBrick(b) === 'clear') return 'clear';
         break;
       }
       if (mode !== 'playing') return 'stop';
@@ -1296,6 +1472,7 @@
       paddleVel = (paddle.x - prevX) / Math.max(dt, 0.001);
       updatePowerups(dt);
       stepBalls(dt);
+      updateLasers(dt); // #3: laser bolts fly and hit bricks
       tickWells(dt);
       // #17: telegraph — track how close the nearest ball is to each awake
       // well that can still swallow. First entry into the pull zone flashes
@@ -1542,6 +1719,29 @@
       ctx.fillText(def.glyph, p.x, p.y + 5);
     }
 
+    // #3: laser bolts — bright red-pink bars with a hot glow.
+    for (const b of bolts) {
+      ctx.save();
+      ctx.shadowColor = LASER_COLOR;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = LASER_COLOR;
+      ctx.fillRect(b.x - 2, b.y - 9, 4, 18);
+      ctx.restore();
+    }
+
+    // #5: the shield net — a glowing green line along the bottom edge
+    // while it is armed, pulsing gently so the player can see it.
+    if (shieldActive) {
+      ctx.save();
+      ctx.shadowColor = SHIELD_COLOR;
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = SHIELD_COLOR;
+      ctx.globalAlpha = 0.5 + 0.2 * Math.sin(t * 6);
+      ctx.fillRect(8, H - 3, W - 16, 3);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
     // Paddle.
     ctx.save();
     ctx.shadowColor = '#00f0ff';
@@ -1698,7 +1898,9 @@
     }
     if (e.code === 'Space') {
       if (mode === 'serving') launch();
-      else if (mode === 'playing') pauseGame();
+      // #3: with a laser paddle, Space shoots instead of pausing —
+      // P / Esc / the PAUSE button still pause while the laser is hot.
+      else if (mode === 'playing') { if (laserTimer > 0) fireLaser(); else pauseGame(); }
       else if (mode === 'paused') resumeGame();
       else if (mode === 'menu' || mode === 'gameover') startRun();
       else if (mode === 'levelclear') advanceFromClear();

@@ -25,7 +25,7 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 - 6 hand-designed levels with multi-hit bricks
 - Void gravity wells (Block 9): from level 2, black holes bend the ball's path inside their telegraphed pull ring and swallow any ball that crosses the event horizon — then go sated for 5s. Each well wakes for 2.5s of every 8s cycle and stirs visibly for 1s first (the ring brightens), so you can time your shots around it; watch the rim flare pink as a ball nears the maw. A well eats at most one ball per level — once fed it only bends the ball, harmlessly. Serves are shielded from the wells for 1.2s, and the paddle respawns at center after a swallow. Level 5 hides one big maw dead center
-- Powerups: multi-ball and wide paddle drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers
+- Powerups: multi-ball, wide paddle, laser paddle (Space to shoot, 12s), slow-mo (0.6× ball speed, 10s) and shield (bottom net saves one lost ball) drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers (Block 11)
 - Roguelite upgrade draft: after every level clear, pick 1 of 3 upgrades (extra life, wider paddle, ball control, score boost, magnet paddle, twin launch) — they stack and last the whole run (Block 6)
 - Run stats: best combo, bricks broken, shot accuracy, and powerups caught/missed shown on the game-over screen (Block 6)
 - Pause menu with run snapshot, restart, and quit-to-menu (Esc / P / Space to pause &amp; resume) (Block 7)
@@ -36,13 +36,14 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 - Combo multiplier with decay timer + on-screen combo bar
 - Juice: particles, screen shake that scales with break size and combo, hit-stop freeze frames, impact flashes, shockwave rings, long ball trail, floating score popups
 - Synthesized Web Audio sound effects (zero audio files)
+- Auto-play bot harness (Block 11): `node tests/bot-harness.js` plays full runs headlessly in a stubbed DOM and reports coverage (levels cleared, powerups, wells, boss) plus bug detectors for ball tunneling, stuck balls and NaN velocities — run it before every push
 - Background music loop: synth arpeggio (Am–F–C–G) with bass and hats that intensify as your combo multiplier climbs (Block 5)
 - High score saved locally, auto-pause when the tab hides
 - Fully responsive — desktop and mobile, no build step
 
 ## Coming up (12-hour sprint roadmap)
 
-Powerups (multi-ball, wide paddle, laser), void gravity wells, elite rows, achievements, more levels, and a v1.0 release. See the sprint plan in the repo's commit history.
+More powerups, achievements, more levels, and a v1.0 release. See the sprint plan in the repo's commit history.
 
 ## Tech
 
@@ -57,6 +58,17 @@ python3 -m http.server 8000
 ```
 
 Or just open `index.html` in a browser.
+
+## Testing
+
+Headless playtest bot — no browser needed:
+
+```bash
+node tests/bot-harness.js            # 2 full runs (default)
+node tests/bot-harness.js 3 200000   # 3 attempts, 200k frames each
+```
+
+The bot plays real runs in a stubbed DOM, tracks the ball with the paddle, drafts upgrades, and reports coverage (levels cleared, powerups caught, wells, boss, max combo) plus bug detectors: ball tunneling through the paddle, stuck balls, NaN positions/velocities, and per-frame speed violations. It exits non-zero if any detector fires or no level is cleared. Run it before every push.
 
 ## Deploy
 
