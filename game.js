@@ -197,6 +197,7 @@
   let runStart = 0;
   let bricks = [];
   let particles = [];
+  let confetti = [];   // #29: level-clear confetti pieces
   let texts = [];
   let shake = 0;
   let hitStop = 0;   // #26: micro-freeze timer (seconds) after big breaks
@@ -222,20 +223,23 @@
   let laserCooldown = 0; // seconds until the next bolt may fire
   let slowTimer = 0;     // seconds of slow-mo remaining
   let shieldActive = false; // one free save at the bottom net
+  let fireTimer = 0;     // #6: seconds of fireball remaining
   let bolts = [];        // live laser bolts {x, y}
   const LASER_DURATION = 12, LASER_COOLDOWN = 0.22, LASER_SPEED = 900;
   const LASER_COLOR = '#ff5c5c', MAX_BOLTS = 6;
   const SLOW_DURATION = 10, SLOW_FACTOR = 0.6;
+  const FIRE_DURATION = 10;
   const SHIELD_COLOR = '#00ffa3';
   let lastPowerText = '—';
 
-  // Powerup defs (backlog #1, #2, #3, #4, #5, #7): glyph drawn on the capsule.
+  // Powerup defs (backlog #1, #2, #3, #4, #5, #6, #7): glyph drawn on the capsule.
   const POWERUP_TYPES = {
     multi: { label: 'MULTI-BALL', color: '#b6ff00', glyph: 'M' },
     wide: { label: 'WIDE PADDLE', color: '#00f0ff', glyph: 'W' },
     laser: { label: 'LASER PADDLE', color: LASER_COLOR, glyph: 'L' },
     slow: { label: 'SLOW-MO', color: '#8b5cff', glyph: 'S' },
     shield: { label: 'SHIELD', color: SHIELD_COLOR, glyph: '◈' },
+    fire: { label: 'FIREBALL', color: '#ff7b00', glyph: 'F' },
   };
   const POWERUP_DROP_CHANCE = 0.12; // per brick destroyed
   const MAX_BALLS = 5;
@@ -522,14 +526,42 @@
   }
 
   // Active-powerup line for the HUD (backlog #7, #8): timers + shield + balls.
+  // powerText() is the plain-text signature of the active set — it drives
+  // the once-per-second re-render, so the chips below never churn the DOM
+  // on every frame. The chips themselves are the visible HUD.
   function powerText() {
     const parts = [];
     if (wideTimer > 0) parts.push('WIDE ' + Math.ceil(wideTimer) + 's');
     if (laserTimer > 0) parts.push('LASER ' + Math.ceil(laserTimer) + 's');
     if (slowTimer > 0) parts.push('SLOW ' + Math.ceil(slowTimer) + 's');
+    if (fireTimer > 0) parts.push('FIRE ' + Math.ceil(fireTimer) + 's');
     if (shieldActive) parts.push('SHIELD');
     if (balls.length > 1) parts.push('×' + balls.length + ' BALLS');
     return parts.length ? parts.join(' · ') : '—';
+  }
+
+  // #8: visual powerup chips — one coloured pill per active powerup, with
+  // a draining countdown bar for the timed ones (WIDE / LASER / SLOW /
+  // FIRE) and a steady pill for SHIELD and multi-ball. Timed chips show
+  // the remaining seconds in white so the number reads at a glance.
+  function chipHTML(type, label, frac, timeStr) {
+    const def = POWERUP_TYPES[type];
+    const pct = frac === null ? 100 : Math.max(0, Math.min(100, Math.round(frac * 100)));
+    return '<span class="pw-chip" style="--c:' + def.color + '">'
+      + '<span class="pw-glyph">' + def.glyph + '</span>' + label
+      + (timeStr ? ' <span class="pw-t">' + timeStr + '</span>' : '')
+      + '<span class="pw-bar"><i style="width:' + pct + '%"></i></span>'
+      + '</span>';
+  }
+  function renderPowerHUD() {
+    const chips = [];
+    if (wideTimer > 0) chips.push(chipHTML('wide', 'WIDE', wideTimer / WIDE_DURATION, Math.ceil(wideTimer) + 's'));
+    if (laserTimer > 0) chips.push(chipHTML('laser', 'LASER', laserTimer / LASER_DURATION, Math.ceil(laserTimer) + 's'));
+    if (slowTimer > 0) chips.push(chipHTML('slow', 'SLOW', slowTimer / SLOW_DURATION, Math.ceil(slowTimer) + 's'));
+    if (fireTimer > 0) chips.push(chipHTML('fire', 'FIRE', fireTimer / FIRE_DURATION, Math.ceil(fireTimer) + 's'));
+    if (shieldActive) chips.push(chipHTML('shield', 'SHIELD', null, null));
+    if (balls.length > 1) chips.push(chipHTML('multi', '×' + balls.length + ' BALLS', null, null));
+    powerEl.innerHTML = chips.length ? chips.join('') : '—';
   }
 
   function updateHUD() {
@@ -540,7 +572,7 @@
     comboEl.textContent = '×' + mult();
     comboEl.style.color = combo > 0 ? '#b6ff00' : '';
     lastPowerText = powerText();
-    powerEl.textContent = lastPowerText;
+    renderPowerHUD();
   }
 
   function saveBest() {
@@ -730,9 +762,9 @@
   function maybeDropPowerup(x, y, chance) {
     if (powerups.length >= 3) return;
     if (Math.random() >= (chance || POWERUP_DROP_CHANCE)) return;
-    // #3/#4/#5: five capsule types, weighted — multi and laser most common.
+    // #3/#4/#5/#6: six capsule types, weighted — multi and wide most common.
     const r = Math.random();
-    const type = r < 0.25 ? 'multi' : r < 0.45 ? 'wide' : r < 0.65 ? 'laser' : r < 0.8 ? 'slow' : 'shield';
+    const type = r < 0.22 ? 'multi' : r < 0.40 ? 'wide' : r < 0.58 ? 'laser' : r < 0.71 ? 'slow' : r < 0.85 ? 'shield' : 'fire';
     powerups.push({ x, y, type, vy: 150 });
   }
 
@@ -779,6 +811,12 @@
       // otherwise fall off the bottom, once, then it is spent.
       shieldActive = true;
       floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'SHIELD UP!', def.color);
+    } else if (type === 'fire') {
+      // #6: fireball for 10s — the ball smashes straight through bricks
+      // without bouncing (see the piercing branch in stepBall). Re-catching
+      // while it is already hot only refreshes the timer.
+      fireTimer = FIRE_DURATION;
+      floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'FIREBALL!', def.color);
     }
     burst(paddle.x + paddle.w / 2, PADDLE_Y, def.color, 16, 240);
     sfx.powerup();
@@ -827,6 +865,11 @@
         slowTimer = 0;
         for (const b of balls) { b.vx /= SLOW_FACTOR; b.vy /= SLOW_FACTOR; }
       }
+    }
+    // #6: the fireball burns out after 10s — balls go back to bouncing.
+    if (fireTimer > 0) {
+      fireTimer -= dt;
+      if (fireTimer <= 0) fireTimer = 0;
     }
   }
 
@@ -900,6 +943,29 @@
     if (rings.length > 24) rings.shift();
   }
 
+  // #29: level-clear confetti — coloured paper that rains down over the
+  // cleared field while the clear overlay is up. Spawned once per clear
+  // (~140 pieces from just above the screen), gentle gravity plus a
+  // sideways flutter, gone in ~3s. Capped so a rapid clear can't flood it.
+  const CONFETTI_COLORS = ['#00f0ff', '#ff2d95', '#b6ff00', '#ffb300', '#8b5cff', '#ffffff'];
+  function confettiBurst(n) {
+    for (let i = 0; i < n; i++) {
+      confetti.push({
+        x: 20 + Math.random() * (W - 40),
+        y: -10 - Math.random() * 90,
+        vx: (Math.random() - 0.5) * 90,
+        vy: 50 + Math.random() * 110,
+        rot: Math.random() * Math.PI * 2,
+        vr: (Math.random() - 0.5) * 10,
+        w: 5 + Math.random() * 4, h: 8 + Math.random() * 6,
+        color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+        life: 2.2 + Math.random() * 0.8,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+    if (confetti.length > 220) confetti.splice(0, confetti.length - 220);
+  }
+
   // ---------- Flow ----------
   function startRun() {
     ensureAudio();
@@ -915,6 +981,7 @@
     paddle.w = paddleBaseW();
     wideTimer = 0;
     laserTimer = 0; laserCooldown = 0; slowTimer = 0; shieldActive = false; // #3/#4/#5
+    fireTimer = 0; // #6
     bolts = [];
     powerups = [];
     paddle.x = (W - paddle.w) / 2;
@@ -925,7 +992,7 @@
     runStart = performance.now();
     buildLevel(level);
     resetBall();
-    particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = [];
+    particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = []; confetti = [];
     hideOverlays();
     showIntro(level);
     mode = 'serving';
@@ -967,6 +1034,7 @@
     paddle.w = paddleBaseW();
     wideTimer = 0;
     laserTimer = 0; laserCooldown = 0; slowTimer = 0; shieldActive = false; // #3/#4/#5
+    fireTimer = 0; // #6
     bolts = [];
     powerups = [];
     paddle.x = (W - paddle.w) / 2;
@@ -974,7 +1042,7 @@
     // paddle must stay centered on the menu, not slide to the last mouse spot.
     buildLevel(level);
     resetBall();
-    particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = [];
+    particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = []; confetti = [];
     lastScoreRank = -1;
     hideOverlays();
     renderScores(-1);
@@ -990,6 +1058,7 @@
     // Juice finale for the clear: big shockwave, a beat of hit-stop, heavy shake.
     ringBurst(W / 2, 200, '#b6ff00', 240);
     burst(W / 2, 200, '#b6ff00', 40, 420);
+    confettiBurst(140); // #29: paper rains over the cleared field
     sfx.explosion(); // #34: the clear lands with a low boom under the fanfare
     hitStop = HITSTOP_MAX;
     shake = Math.min(SHAKE_MAX, shake + 8);
@@ -1021,9 +1090,9 @@
     combo = 0; comboTimer = 0;
     paddle.w = paddleBaseW();
     wideTimer = 0;
-    // #3/#4: timed powerups don't carry between levels (like WIDE); the
+    // #3/#4/#6: timed powerups don't carry between levels (like WIDE); the
     // shield (#5) is a charge, not a timer, so it stays armed until used.
-    laserTimer = 0; laserCooldown = 0; slowTimer = 0;
+    laserTimer = 0; laserCooldown = 0; slowTimer = 0; fireTimer = 0;
     bolts = [];
     powerups = [];
     levelOverlay.classList.add('hidden');
@@ -1371,12 +1440,31 @@
         burst(ball.x, PADDLE_Y, '#00f0ff', 6, 160);
       }
 
-      // Bricks: one hit per substep.
+      // Bricks: one hit per substep (or a pierce-through per substep while
+      // the fireball burns). A fireball's remembered brick is forgotten as
+      // soon as the ball leaves it, so the next pass damages it again.
+      if (ball.lastFire) {
+        const lf = ball.lastFire;
+        if (!lf.alive || ball.x + BALL_R < lf.x || ball.x - BALL_R > lf.x + lf.w
+          || ball.y + BALL_R < lf.y || ball.y - BALL_R > lf.y + lf.h) ball.lastFire = null;
+      }
       for (let i = 0; i < bricks.length; i++) {
         const b = bricks[i];
         if (!b.alive) continue;
         if (ball.x + BALL_R < b.x || ball.x - BALL_R > b.x + b.w
           || ball.y + BALL_R < b.y || ball.y - BALL_R > b.y + b.h) continue;
+        if (fireTimer > 0) {
+          // #6: fireball pierces — damage the brick and keep flying,
+          // no bounce. One damage per brick per pass (lastFire), so a
+          // 22px-tall brick doesn't take five hits from one pass-through.
+          if (ball.lastFire === b) continue;
+          ball.lastFire = b;
+          stats.brickHits++; // #11
+          if (shotPending) { stats.shotsHit++; shotPending = false; }
+          burst(ball.x, ball.y, '#ff7b00', 6, 220);
+          if (damageBrick(b) === 'clear') return 'clear';
+          continue;
+        }
         if (!reflectOffBrick(b, ball)) continue;
         // #11: every brick contact counts; a pending paddle shot is a hit.
         stats.brickHits++;
@@ -1449,6 +1537,17 @@
       flashes[i].life -= dt;
       if (flashes[i].life <= 0) flashes.splice(i, 1);
     }
+    // #29: confetti falls with gentle gravity and a sideways flutter;
+    // pieces fade out in their last second and leave at the bottom.
+    for (let i = confetti.length - 1; i >= 0; i--) {
+      const c = confetti[i];
+      c.life -= dt;
+      if (c.life <= 0 || c.y > H + 12) { confetti.splice(i, 1); continue; }
+      c.vy = Math.min(240, c.vy + 60 * dt);
+      c.x += (c.vx + Math.sin(c.life * 8 + c.phase) * 40) * dt;
+      c.y += c.vy * dt;
+      c.rot += c.vr * dt;
+    }
     shake *= Math.pow(0.001, dt);
     if (shake < 0.05) shake = 0;
 
@@ -1494,11 +1593,13 @@
         b.trail.push({ x: b.x, y: b.y });
         if (b.trail.length > 18) b.trail.shift(); // #27: longer trail
       }
-      // #31: at multiplier ×3+ the ball is ON FIRE — flame particles
-      // stream off every live ball, announced once per hot streak.
+      // #31 / #6: at multiplier ×3+ the ball is ON FIRE — flame particles
+      // stream off every live ball, announced once per hot streak. A
+      // fireball burns the same way for its whole 10s, even at ×1.
       const m = mult();
-      if (m >= 3) {
-        if (!fireAnnounced) {
+      const burning = m >= 3 || fireTimer > 0;
+      if (burning) {
+        if (m >= 3 && !fireAnnounced) {
           fireAnnounced = true;
           floatText(W / 2, H / 2 - 60, 'ON FIRE! ×' + m, '#ff7b00');
         }
@@ -1518,7 +1619,7 @@
       }
       // Wide-paddle countdown ticks in the HUD once per second.
       const pt = powerText();
-      if (pt !== lastPowerText) { lastPowerText = pt; powerEl.textContent = pt; }
+      if (pt !== lastPowerText) { lastPowerText = pt; renderPowerHUD(); }
     } else if (mode === 'serving') {
       tickWells(dt);
       const prevX = paddle.x;
@@ -1757,8 +1858,9 @@
 
     // Ball trails + balls (multi-ball draws every live ball).
     // #27: longer, brighter trail — fades from the ball back to a ghost.
-    // #31: at ×3+ the ball burns orange — hot trail, hot glow, hot core.
-    const hot = mode === 'playing' && mult() >= 3;
+    // #31 / #6: at ×3+ — or while the fireball burns — the ball is hot:
+    // hot trail, hot glow, hot core.
+    const hot = mode === 'playing' && (mult() >= 3 || fireTimer > 0);
     if (mode !== 'menu') {
       for (const b of balls) {
         for (let i = 0; i < b.trail.length; i++) {
@@ -1793,6 +1895,18 @@
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // #29: confetti — small rotating rectangles, fading in their last second.
+    for (const c of confetti) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, c.life / 0.8);
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.rot);
+      ctx.fillStyle = c.color;
+      ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+      ctx.restore();
     }
     ctx.globalAlpha = 1;
 

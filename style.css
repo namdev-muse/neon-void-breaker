@@ -105,7 +105,39 @@ body {
 .hud-item.combo .hud-value { color: var(--lime); }
 
 /* Powerup HUD (Block 3): smaller value so "WIDE 12s · ×3 BALLS" fits. */
-.hud-item.power .hud-value { font-size: 14px; color: var(--cyan); line-height: 1.7; }
+/* #8 (Block 12): active powerups render as coloured chips with a draining
+   countdown bar — one pill per powerup, wrapping inside the POWER cell. */
+.hud-item.power .hud-value {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  align-items: center;
+  min-height: 24px;
+  font-size: 14px;
+  color: var(--cyan);
+  line-height: 1.7;
+}
+.pw-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px 4px;
+  border: 1px solid var(--c);
+  border-radius: 999px;
+  color: var(--c);
+  background: rgba(7, 3, 18, 0.55);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.pw-glyph { font-size: 11px; text-shadow: 0 0 8px currentColor; }
+.pw-t { color: #fff; }
+.pw-bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: rgba(255, 255, 255, 0.14); }
+.pw-bar i { display: block; height: 100%; background: var(--c); }
 
 .stage {
   position: relative;
