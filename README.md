@@ -4,6 +4,10 @@
 
 🎮 **Play it live:** https://namdev-muse.github.io/neon-void-breaker/
 
+![Gameplay](docs/screenshot-gameplay.png)
+
+![Gameplay clip](docs/gameplay.gif)
+
 ![Status](https://github.com/namdev-muse/neon-void-breaker/actions/workflows/ci-pages.yml/badge.svg)
 
 ## How to play
@@ -25,7 +29,7 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 - 6 hand-designed levels with multi-hit bricks
 - Void gravity wells (Block 9): from level 2, black holes bend the ball's path inside their telegraphed pull ring and swallow any ball that crosses the event horizon — then go sated for 5s. Each well wakes for 2.5s of every 8s cycle and stirs visibly for 1s first (the ring brightens), so you can time your shots around it; watch the rim flare pink as a ball nears the maw. A well eats at most one ball per level — once fed it only bends the ball, harmlessly. Serves are shielded from the wells for 1.2s, and the paddle respawns at center after a swallow. Level 5 hides one big maw dead center
-- Powerups: multi-ball, wide paddle, laser paddle (Space to shoot, 12s), slow-mo (0.6× ball speed, 10s) and shield (bottom net saves one lost ball) drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers (Block 11)
+- Powerups: multi-ball, wide paddle, laser paddle (Space to shoot, 12s), slow-mo (0.6× ball speed, 10s), shield (bottom net saves one lost ball), and fireball (piercing ball, 10s) drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers as coloured chips with countdown bars (Block 11, Block 12)
 - Roguelite upgrade draft: after every level clear, pick 1 of 3 upgrades (extra life, wider paddle, ball control, score boost, magnet paddle, twin launch) — they stack and last the whole run (Block 6)
 - Run stats: best combo, bricks broken, shot accuracy, and powerups caught/missed shown on the game-over screen (Block 6)
 - Pause menu with run snapshot, restart, and quit-to-menu (Esc / P / Space to pause &amp; resume) (Block 7)
@@ -34,7 +38,7 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 - Full keyboard-only play: Space/Enter start and advance, R/N/Q pause-menu shortcuts, ← → moves focus across draft cards, every overlay focuses its primary button, visible focus rings (Block 8)
 - Small-phone responsive pass: 3-column HUD, shrinking draft cards, safe-area padding, landscape mode hides the help text and fits the canvas to the viewport height (Block 8)
 - Combo multiplier with decay timer + on-screen combo bar
-- Juice: particles, screen shake that scales with break size and combo, hit-stop freeze frames, impact flashes, shockwave rings, long ball trail, floating score popups
+- Juice: particles, screen shake that scales with break size and combo, hit-stop freeze frames, impact flashes, shockwave rings, long ball trail, floating score popups, level-clear confetti burst (Block 12)
 - Synthesized Web Audio sound effects (zero audio files)
 - Auto-play bot harness (Block 11): `node tests/bot-harness.js` plays full runs headlessly in a stubbed DOM and reports coverage (levels cleared, powerups, wells, boss) plus bug detectors for ball tunneling, stuck balls and NaN velocities — run it before every push
 - Background music loop: synth arpeggio (Am–F–C–G) with bass and hats that intensify as your combo multiplier climbs (Block 5)
@@ -43,7 +47,9 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 ## Coming up (12-hour sprint roadmap)
 
-More powerups, achievements, more levels, and a v1.0 release. See the sprint plan in the repo's commit history.
+Levels 7–10, achievements, more powerups (including the void bomb),
+accessibility and cross-browser passes, PWA-lite polish, and a v1.0
+release. Follow the build in [docs/devlog.md](docs/devlog.md).
 
 ## Tech
 
