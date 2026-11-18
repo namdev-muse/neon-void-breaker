@@ -24,6 +24,7 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 ## Features
 
 - 6 hand-designed levels with multi-hit bricks
+- Void gravity wells (Block 9): from level 2, black holes bend the ball's path inside their telegraphed pull ring and swallow any ball that crosses the event horizon — then go sated for 5s. Each well wakes for 2.5s of every 8s cycle and stirs visibly for 1s first (the ring brightens), so you can time your shots around it; watch the rim flare pink as a ball nears the maw. A well eats at most one ball per level — once fed it only bends the ball, harmlessly. Serves are shielded from the wells for 1.2s, and the paddle respawns at center after a swallow. Level 5 hides one big maw dead center
 - Powerups: multi-ball and wide paddle drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers
 - Roguelite upgrade draft: after every level clear, pick 1 of 3 upgrades (extra life, wider paddle, ball control, score boost, magnet paddle, twin launch) — they stack and last the whole run (Block 6)
 - Run stats: best combo, bricks broken, shot accuracy, and powerups caught/missed shown on the game-over screen (Block 6)

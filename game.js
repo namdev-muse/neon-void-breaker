@@ -90,6 +90,50 @@
   const BRICK_COLORS = { 1: '#00f0ff', 2: '#ff2d95', 3: '#ffb300' };
   const BRICK_SCORE = { 1: 50, 2: 100, 3: 150 };
 
+  // ---------- Void wells (backlog #14, #15, #17) ----------
+  // The signature mechanic: black holes that bend the ball's trajectory
+  // (#14) and swallow it if it crosses the event horizon (#15). The bend
+  // rotates the ball's velocity toward the center, strongest close in
+  // (quadratic falloff, so distant passes barely bend), and is always
+  // weaker than the turn rate a stable orbit would need, so a ball either
+  // escapes or spirals in; it can never orbit forever. A well only hunts
+  // while awake — it wakes for 2.5s of every 8s cycle, stirs visibly for
+  // 1s before waking (the telegraph ring brightens), and sleeps dimmed
+  // the rest of the time, so the player can time shots around it. After
+  // a swallow the maw is sated for 5s (no pull, no swallow, dimmed) so
+  // one bad bounce can't eat the whole run. Wells on the same level wake
+  // on staggered phases so they never all fire at once. Level 1 has no
+  // wells — the void hasn't woken up yet. Later levels place 1–2 wells
+  // below the brick field, off the serve line except on level 5, GRAVITY
+  // WELL, where one big maw sits dead center. Tuning note: the first
+  // always-on version ate all 3 of a perfect-tracking AI's lives on
+  // level 2 (bend 2.0 / horizon 18); the pulsing version still did
+  // (bend 1.6 / horizon 14) — a well in the ball's transit corridor gets
+  // dozens of capture chances per level, so the bend has to stay gentle
+  // (0.8) with a small horizon (12) and a 1.2s launch shield, and the
+  // serve respawns at center after a swallow. Even so the AI lost 2–3
+  // balls per level-2 attempt, so each well eats at most one ball per
+  // level (WELL_MAX_MEALS): once fed it only bends the ball, harmlessly,
+  // for the rest of the level, and the hazard can never end a run alone.
+  const WELL_PULL_R = 120;   // telegraph ring: gravity reaches this far
+  const WELL_HORIZON = 12;   // event horizon: closer than this = swallowed
+  const WELL_BEND = 0.8;     // max bend rate, radians per second (at core)
+  const WELL_MAX_MEALS = 1;  // balls a well can swallow per level
+  const WELL_CORE_R = 15;    // black core radius (drawn)
+  const WELL_RING_R = 30;    // accretion ring radius (drawn)
+  const WELL_SATED_SECS = 5; // cooldown after a swallow
+  const WELL_CYCLE = 8;      // wake-cycle length, seconds
+  const WELL_ACTIVE = 2.5;   // seconds awake per cycle (last part of it)
+  const WELL_STIR = 1.0;     // seconds of visible stirring before waking
+  const VOID_WELLS = [
+    [],
+    [{ x: 200, y: 340 }],
+    [{ x: 520, y: 360 }],
+    [{ x: 200, y: 350 }, { x: 520, y: 350 }],
+    [{ x: 360, y: 380, pullR: 150, horizon: 12, bend: 1.2 }],
+    [{ x: 180, y: 340 }, { x: 540, y: 340 }],
+  ];
+
   // ---------- DOM ----------
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -146,6 +190,10 @@
   const paddle = { x: (W - 96) / 2, w: 96, targetX: null };
   let balls = [];      // active balls (multi-ball can grow this to 5)
   let powerups = [];   // falling capsules {x, y, type, vy}
+  let wells = [];      // active void wells for this level (#14, #15, #17)
+  let launchGrace = 0; // seconds after a launch during which wells can't
+  // touch the ball — without this, a ball swallowed by the well respawns
+  // on a paddle parked under the well and feeds itself straight back in.
   let wideTimer = 0;   // seconds of wide paddle remaining
   let lastPowerText = '—';
 
@@ -514,6 +562,54 @@
   }
 
   // ---------- Level setup ----------
+  // #14: per-level void wells from the VOID_WELLS table. Each well tracks
+  // `warned` (telegraph shown once per entry into the pull zone), `danger`
+  // (0..1, how close the nearest ball is to the maw), `cool` (seconds of
+  // post-swallow dormancy left) and `phase` (position in the wake cycle;
+  // wells on a level start staggered so they never all wake at once, and
+  // each starts dormant so the player gets a grace period).
+  function buildWells(n) {
+    const defs = VOID_WELLS[n - 1] || [];
+    wells = defs.map((w, i) => ({
+      x: w.x, y: w.y,
+      pullR: w.pullR || WELL_PULL_R,
+      horizon: w.horizon || WELL_HORIZON,
+      bend: w.bend || WELL_BEND,
+      phase: (i * WELL_CYCLE) / Math.max(1, defs.length),
+      meals: 0, // balls swallowed this level (cap: WELL_MAX_MEALS)
+      warned: false,
+      danger: 0,
+      cool: 0,
+    }));
+  }
+
+  // A well only bends and swallows while awake (the last ACTIVE seconds of
+  // its cycle) and not sated from a recent swallow.
+  function wellAwake(w) {
+    return w.cool <= 0 && w.phase >= WELL_CYCLE - WELL_ACTIVE;
+  }
+
+  // A fed well (ate its one meal this level) can no longer swallow — it
+  // only bends the ball, harmlessly, for the rest of the level.
+  function wellCanSwallow(w) {
+    return w.meals < WELL_MAX_MEALS;
+  }
+
+  // Stirring: the 1s before waking, when the telegraph ring brightens.
+  function wellStirring(w) {
+    return w.cool <= 0 && w.phase >= WELL_CYCLE - WELL_ACTIVE - WELL_STIR;
+  }
+
+  // Advances the wake cycle and the sated cooldown; called from the
+  // playing and serving branches (never while paused or in menus).
+  function tickWells(dt) {
+    for (const w of wells) {
+      w.phase += dt;
+      if (w.phase >= WELL_CYCLE) w.phase -= WELL_CYCLE;
+      if (w.cool > 0) w.cool -= dt;
+    }
+  }
+
   function buildLevel(n) {
     const map = LEVELS[n - 1];
     const rows = map.length;
@@ -532,6 +628,7 @@
         });
       }
     }
+    buildWells(n);
   }
 
   function newBall(x, y, vx, vy) {
@@ -559,6 +656,7 @@
       b.vx = Math.cos(angle) * speed;
       b.vy = Math.sin(angle) * speed;
     });
+    launchGrace = 1.2; // #14: the serve is shielded from the wells
     mode = 'playing';
     sfx.launch();
   }
@@ -865,14 +963,23 @@
     updateHUD();
   }
 
-  function loseBall() {
+  // `swallowed` skips the bottom-loss effects — the maw already burst,
+  // shook and whooshed at the well, so a second copy would double up.
+  // The paddle also respawns at center after a swallow, so the next serve
+  // doesn't start parked under the maw that just ate the ball.
+  function loseBall(swallowed) {
     lives--;
     combo = 0; comboTimer = 0;
     stats.ballsLost++;
     shotPending = false; // the pending shot died with the ball
-    shake = 12;
-    sfx.voidSwallow(); // #34: the void swallows the ball, not a plain buzz
-    burst(paddle.x + paddle.w / 2, H - 12, '#ff2d95', 26, 300);
+    if (!swallowed) {
+      shake = 12;
+      sfx.voidSwallow(); // #34: the void swallows the ball, not a plain buzz
+      burst(paddle.x + paddle.w / 2, H - 12, '#ff2d95', 26, 300);
+    } else {
+      paddle.x = (W - paddle.w) / 2;
+      paddle.targetX = null;
+    }
     updateHUD();
     if (lives <= 0) { gameOver(false); return; }
     resetBall();
@@ -933,6 +1040,33 @@
     for (let s = 0; s < steps; s++) {
       ball.x += ball.vx * sdt;
       ball.y += ball.vy * sdt;
+
+      // #14/#15: void wells bend the ball and swallow it at the horizon.
+      // A dormant or sated well neither pulls nor swallows, and a ball
+      // inside its launch grace is shielded from all wells.
+      for (let wi = 0; wi < wells.length; wi++) {
+        const w = wells[wi];
+        if (!wellAwake(w) || launchGrace > 0) continue;
+        const dx = w.x - ball.x, dy = w.y - ball.y;
+        const d = Math.hypot(dx, dy);
+        if (d < w.horizon && wellCanSwallow(w)) { swallowBall(w); return 'swallowed'; }
+        if (d < w.pullR) {
+          // Rotate the velocity toward the well center, stronger the
+          // closer the ball gets (quadratic falloff, so distant passes
+          // barely bend); speed is preserved, only direction bends.
+          const falloff = 1 - d / w.pullR;
+          const bend = w.bend * falloff * falloff * sdt;
+          const ang = Math.atan2(ball.vy, ball.vx);
+          let diff = Math.atan2(dy, dx) - ang;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          const turn = clamp(diff, -bend, bend);
+          const sp = Math.hypot(ball.vx, ball.vy) || ballSpeed();
+          const na = ang + turn;
+          ball.vx = Math.cos(na) * sp;
+          ball.vy = Math.sin(na) * sp;
+        }
+      }
 
       // Walls.
       if (ball.x < BALL_R) { ball.x = BALL_R; ball.vx = Math.abs(ball.vx); sfx.wall(); burst(ball.x, ball.y, '#00f0ff', 3, 120); }
@@ -1012,13 +1146,29 @@
   function stepBalls(dt) {
     for (let i = balls.length - 1; i >= 0; i--) {
       const res = stepBall(dt, balls[i]);
-      if (res === 'lost') {
+      if (res === 'lost' || res === 'swallowed') {
         balls.splice(i, 1);
-        if (balls.length === 0) { loseBall(); return; }
+        if (balls.length === 0) { loseBall(res === 'swallowed'); return; }
       } else if (res === 'clear' || res === 'stop') {
         return;
       }
     }
+  }
+
+  // #15: the maw takes the ball — purple burst, shockwave, a shake, and
+  // the void-swallow whoosh — then goes sated for a few seconds. The life
+  // itself is only lost by the caller, when this was the last ball.
+  function swallowBall(w) {
+    w.meals++;
+    w.cool = WELL_SATED_SECS;
+    w.danger = 0;
+    w.warned = false;
+    burst(w.x, w.y, '#8b5cff', 30, 380);
+    burst(w.x, w.y, '#ff2d95', 18, 260);
+    ringBurst(w.x, w.y, '#8b5cff', 130);
+    floatText(w.x, w.y - 36, 'SWALLOWED!', '#ff2d95');
+    shake = Math.min(SHAKE_MAX, shake + 6);
+    sfx.voidSwallow();
   }
 
   // ---------- Update ----------
@@ -1060,6 +1210,7 @@
         comboTimer -= dt;
         if (comboTimer <= 0) { combo = 0; updateHUD(); }
       }
+      if (launchGrace > 0) launchGrace -= dt; // #14: serve shield ticks down
       // Keyboard paddle.
       const prevX = paddle.x;
       let dir = 0;
@@ -1074,6 +1225,23 @@
       paddleVel = (paddle.x - prevX) / Math.max(dt, 0.001);
       updatePowerups(dt);
       stepBalls(dt);
+      tickWells(dt);
+      // #17: telegraph — track how close the nearest ball is to each awake
+      // well that can still swallow. First entry into the pull zone flashes
+      // a one-time VOID PULL! warning above the telegraph ring. A fed well
+      // only bends, so it never warns.
+      for (const w of wells) {
+        if (!wellAwake(w) || !wellCanSwallow(w)) { w.danger = 0; w.warned = false; continue; }
+        let near = Infinity;
+        for (const b of balls) near = Math.min(near, Math.hypot(w.x - b.x, w.y - b.y));
+        w.danger = near === Infinity ? 0 : clamp(1 - (near - w.horizon) / (w.pullR - w.horizon), 0, 1);
+        if (near < w.pullR && !w.warned) {
+          w.warned = true;
+          floatText(w.x, w.y - w.pullR - 8, 'VOID PULL!', '#b46bff');
+        } else if (near >= w.pullR) {
+          w.warned = false;
+        }
+      }
       for (const b of balls) {
         b.trail.push({ x: b.x, y: b.y });
         if (b.trail.length > 18) b.trail.shift(); // #27: longer trail
@@ -1082,6 +1250,7 @@
       const pt = powerText();
       if (pt !== lastPowerText) { lastPowerText = pt; powerEl.textContent = pt; }
     } else if (mode === 'serving') {
+      tickWells(dt);
       const prevX = paddle.x;
       let dir = 0;
       if (keys.has('ArrowLeft') || keys.has('KeyA')) dir -= 1;
@@ -1102,6 +1271,77 @@
   }
 
   // ---------- Render ----------
+  // #17: black-hole visuals — a dashed telegraph ring at the pull radius
+  // (faint while dormant, brightening as the maw stirs, pulsing pink
+  // while awake and a ball is inside), a rotating dashed accretion ring,
+  // orbiting wisps being sucked in, and a black core with a violet rim
+  // that flares pink at high danger. A dormant well renders dimmed and
+  // slow; a sated well (just swallowed a ball) renders dimmed and dormant;
+  // a fed well (ate its one meal this level) renders grey and quiet — it
+  // only bends the ball now, it can no longer swallow.
+  function drawWells(t) {
+    for (const w of wells) {
+      const awake = wellAwake(w);
+      const sated = w.cool > 0;
+      const fed = !wellCanSwallow(w) && !sated;
+      // Stir progress 0..1 in the second before the maw wakes.
+      const stir = (!awake && !sated && !fed && wellStirring(w))
+        ? (w.phase - (WELL_CYCLE - WELL_ACTIVE - WELL_STIR)) / WELL_STIR : 0;
+      const hot = w.danger > 0;
+      const dim = sated ? 0.3 : (fed ? 0.35 : (awake ? 1 : 0.45 + 0.35 * stir));
+      // Telegraph ring: the danger zone, faint until the maw stirs.
+      ctx.save();
+      ctx.globalAlpha = (fed ? 0.04 : (awake
+        ? 0.10 + 0.30 * w.danger + (hot ? 0.06 * Math.sin(t * 10) : 0)
+        : 0.05 + 0.25 * stir)) * dim;
+      ctx.strokeStyle = w.danger > 0.75 ? '#ff2d95' : '#8b5cff';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([10, 12]);
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, w.pullR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      // Accretion ring: rotating dashes around the core, slow when dormant.
+      ctx.save();
+      ctx.globalAlpha = dim;
+      ctx.shadowColor = fed ? '#555566' : '#b46bff';
+      ctx.shadowBlur = awake ? 16 : 6;
+      ctx.strokeStyle = fed ? '#777788' : '#c9a7ff';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([14, 9]);
+      ctx.lineDashOffset = -t * (awake ? 46 : 12);
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, WELL_RING_R, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      // Orbiting wisps: three dots spiralling in, only while awake and hungry.
+      if (awake && !fed) {
+        for (let i = 0; i < 3; i++) {
+          const a = t * (0.9 + i * 0.35) + i * 2.1;
+          const r = WELL_RING_R + 14 + 10 * Math.sin(t * 1.7 + i);
+          ctx.globalAlpha = 0.55;
+          ctx.fillStyle = '#b46bff';
+          ctx.beginPath();
+          ctx.arc(w.x + Math.cos(a) * r, w.y + Math.sin(a) * r, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+      // Black core with a rim that flares pink when a ball is about to die.
+      ctx.save();
+      ctx.shadowColor = fed ? '#555566' : (w.danger > 0.6 ? '#ff2d95' : '#8b5cff');
+      ctx.shadowBlur = (awake ? 18 + 18 * w.danger : 6 + 10 * stir) * dim;
+      ctx.fillStyle = sated ? '#1a1030' : (fed ? '#1a1a26' : (awake ? '#05010f' : '#0d0820'));
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, WELL_CORE_R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = fed ? '#777788' : (w.danger > 0.6 ? '#ff2d95' : '#b46bff');
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   function render(t) {
     ctx.clearRect(0, 0, W, H);
     ctx.save();
@@ -1136,6 +1376,9 @@
       ctx.fillStyle = '#b6ff00';
       ctx.fillRect(36, 56, Math.max(0, w), 4);
     }
+
+    // Void wells (#14, #15, #17) — drawn under the bricks, over the stars.
+    drawWells(t);
 
     // Bricks.
     for (const b of bricks) {
