@@ -92,6 +92,18 @@ Real gameplay screenshots and an animated GIF, captured by driving the
 live game in headless Chromium with the same ball-tracking bot the harness
 uses. This devlog, issue templates, and a contributing guide.
 
+### Block 14 — Perf + accessibility + live smoke test
+The game now watches its own frame rate: sustained sub-45 FPS switches
+to a low-perf mode (no `shadowBlur`, fewer particles, shorter ball
+trails) and recovers when the frame rate comes back, so a weak machine
+gets a smooth game instead of a stuttering one. Screen-reader players
+get a polite live region announcing level clears, lost balls, powerups
+and game over; every overlay is a proper dialog and draft cards carry
+full aria-labels. `prefers-reduced-motion` turns off shake and confetti.
+A new `tests/live-smoke.js` checks the deployed site after every push —
+page, bundle and stylesheet all answer 200 and carry the current version
+— and retries while GitHub Pages finishes deploying.
+
 ## How the game is tested
 
 Every block runs `node tests/bot-harness.js` before pushing: a headless
@@ -101,6 +113,9 @@ wells, boss, max combo) plus bug detectors for ball tunneling, stuck
 balls, and NaN velocities. It exits non-zero if any detector fires.
 The harness has caught three shipping bugs so far — the level-4 bleed-out
 balance bug, the slow-mo compounding bug, and the laser gap-tunneling bug.
+A second script, `tests/live-smoke.js`, checks the deployed site after
+every push: the page, bundle and stylesheet answer 200 and carry the
+current version, retrying while GitHub Pages finishes deploying.
 
 The screenshots in this repo were captured the same way: the bot played
 the real game in headless Chromium (Playwright) while screenshots were

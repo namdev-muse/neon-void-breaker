@@ -139,6 +139,19 @@ body {
 .pw-bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: rgba(255, 255, 255, 0.14); }
 .pw-bar i { display: block; height: 100%; background: var(--c); }
 
+/* #51: visually hidden but readable by screen readers (the live region). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .stage {
   position: relative;
   border-radius: 14px;
@@ -357,6 +370,22 @@ canvas {
 }
 
 .foot a { color: var(--cyan); }
+
+/* #51: the footer link needs the same visible keyboard-focus ring. */
+.foot a:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* #51: respect prefers-reduced-motion — the intro zoom and the NEW BEST
+   pulse go still; the game.js side drops shake and confetti too. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 /* #42: small-phone responsive pass. */
 @media (max-width: 560px) {

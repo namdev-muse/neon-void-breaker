@@ -74,6 +74,9 @@ function makeEl(tag, id) {
     set innerHTML(v) { this._innerHTML = v; if (v === '') this.children = []; },
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
     appendChild(child) { child.parent = this; this.children.push(child); return child; },
+    // Block 14 (#51): draft cards set aria-labels — the stub needs the API.
+    setAttribute(name, value) { (this._attrs = this._attrs || {})[name] = String(value); },
+    getAttribute(name) { return (this._attrs && this._attrs[name]) || null; },
     dispatch(type, ev) {
       const e = Object.assign({ target: this, preventDefault() { this._pd = true; }, _pd: false }, ev || {});
       for (const fn of (this.listeners[type] || [])) fn(e);
@@ -128,7 +131,7 @@ const IDS = ['score', 'best', 'level', 'lives', 'combo', 'power', 'menuOverlay',
   'draftCards', 'introLevel', 'introName', 'introFlavor', 'levelTitle', 'levelStats',
   'gameOverTitle', 'gameOverStats', 'nextLevelBtn', 'muteBtn', 'pauseBtn', 'pauseStats',
   'menuScores', 'gameOverScores', 'playBtn', 'resumeBtn', 'restartBtnPause',
-  'quitBtnPause', 'againBtn', 'menuBtnOver'];
+  'quitBtnPause', 'againBtn', 'menuBtnOver', 'srStatus'];
 for (const id of IDS) {
   const tag = /Btn$/.test(id) ? 'BUTTON' : (id.endsWith('Overlay') || id === 'draftCards' ? 'DIV' : 'SPAN');
   makeEl(tag, id);
@@ -186,6 +189,8 @@ const obs = {
   // bug detectors (#45, #47, #48)
   tunnelBugs: [], stuckEvents: 0, nanEvents: [], speedViolations: 0,
   maxStep: 0, maxStepClean: 0, crossings: 0, bounces: 0, unresolvedCrossings: 0, lostDespiteTracking: 0,
+  // Block 14 observations (#46 FPS guard, #51 accessibility)
+  srAnnounced: false,
   levelsCleared: [], maxLevel: 1, finalScore: 0,
 };
 let prevBall = null, prevLives = 3, prevScore = 0, prevAngle = null, prevInZone = false;
@@ -226,6 +231,9 @@ function lives() { return (elementsById.lives.textContent.match(/●/g) || []).l
 function observe() {
   const b = ballPos();
   const lv = level(), sc = score(), lvN = lives();
+  // Block 14 (#51): latch any screen-reader announcement the game made.
+  const sr = elementsById.srStatus && elementsById.srStatus.textContent;
+  if (sr) obs.srAnnounced = true;
   if (lv > obs.maxLevel) obs.maxLevel = lv;
   const scoreJump = sc > prevScore;
   if (sc < prevScore) obs.nanEvents.push('score decreased ' + prevScore + ' -> ' + sc);
@@ -435,6 +443,20 @@ function pump(frames) {
   }
 }
 
+// Block 14 (#46): pump frames at a fixed slow cadence WITHOUT observe() —
+// a 40ms frame moves the ball up to 22px (dt caps at 33ms), which would
+// trip the 60fps speed detector; this probe only cares about the FPS guard
+// engaging and the renderer dropping shadowBlur, so it reads frameArcs
+// directly and never touches the motion detectors.
+function pumpSlow(frames) {
+  for (let i = 0; i < frames; i++) {
+    nowMs += 40; audioNow += 0.04;
+    frameArcs = []; frameTexts = []; frameFills = new Set(); frameRects = [];
+    const cbs = rafQ; rafQ = [];
+    for (const cb of cbs) cb(nowMs);
+  }
+}
+
 // Serving = ball glued to the paddle: same position 6 frames running, low
 // on the screen, no overlay up. (6 frames > the longest hit-stop freeze.)
 let frozenRun = 0, lastBall = null;
@@ -543,7 +565,7 @@ check('audit: NaN velocity guard present', SRC.includes('Number.isFinite(ball.vx
 
 console.log('== HTML ==');
 const html = fs.readFileSync(HTML, 'utf8');
-check('HTML: version v0.13.0', html.includes('v0.13.0'));
+check('HTML: version v0.14.0', html.includes('v0.14.0'));
 
 console.log('== bot playtest (#45) ==');
 let attemptResults = [];
@@ -640,6 +662,54 @@ check('detector: no NaN observations', obs.nanEvents.length === 0, obs.nanEvents
 check('detector: max per-frame ball step <= ' + MAX_STEP.toFixed(1) + 'px (max speed 680, non-scoring frames)',
   obs.maxStepClean <= MAX_STEP, 'maxStepClean=' + obs.maxStepClean.toFixed(2) + 'px, raw maxStep=' + obs.maxStep.toFixed(2) + 'px, violations=' + obs.speedViolations);
 
+console.log('== Block 14 (#46 FPS guard, #51 accessibility) ==');
+check('a11y: live region #srStatus present (role=status, aria-live=polite)',
+  html.includes('id="srStatus"') && html.includes('role="status"') && html.includes('aria-live="polite"'));
+check('a11y: all 5 overlays are dialogs', (html.match(/role="dialog"/g) || []).length >= 5);
+check('a11y: canvas has role="img"', html.includes('role="img"'));
+check('a11y: draft cards get aria-labels', SRC.includes("setAttribute('aria-label'"));
+const draftCards = elementsById.draftCards.children || [];
+check('a11y: draft cards carry a real aria-label at runtime',
+  draftCards.length === 3 && draftCards.every((c) => (c.getAttribute('aria-label') || '').indexOf('Press') >= 0),
+  'cards=' + draftCards.length);
+check('a11y: announce() wired to key events', (SRC.match(/announce\(/g) || []).length >= 7 && SRC.includes('srStatus'));
+check('a11y: screen-reader announcements fired during the run', obs.srAnnounced === true);
+check('perf: FPS EMA + low-perf degrade present', SRC.includes('fpsEma') && SRC.includes('lowPerf') && SRC.includes('glow('));
+check('perf: all shadowBlur writes gated through glow()', (SRC.match(/shadowBlur = glow\(/g) || []).length >= 8);
+check('perf: particle/confetti caps adapt to low-perf', SRC.includes('PARTICLE_CAP') && SRC.includes('CONFETTI_CAP'));
+check('perf: reduced-motion honored (matchMedia + no shake/confetti)', SRC.includes('prefers-reduced-motion') && SRC.includes('REDUCED_MOTION'));
+const perf = global.window.__nvbPerf;
+check('perf: window.__nvbPerf exposed, FPS sane at 60fps sim', !!perf && perf.fps > 50 && perf.fps < 70 && perf.lowPerf === false,
+  'fps=' + (perf && perf.fps.toFixed(1)));
+// Slow-frame probe: get to a fresh serve (ball glued, no motion detectors
+// to trip), drive 200 frames at 40ms, and confirm the guard engages and
+// the renderer drops shadowBlur. Then 400 normal frames must recover it.
+if (overlayVisible('gameOverOverlay')) { resetRunTracking(); key('Enter', bodyEl); pump(3); }
+else if (overlayVisible('menuOverlay')) { elementsById.playBtn.click(); pump(3); }
+else if (overlayVisible('levelOverlay')) { advanceLevel(); pump(3); }
+else if (overlayVisible('draftOverlay')) { key('Digit2'); pump(3); }
+else if (overlayVisible('pauseOverlay')) {
+  key('KeyQ'); pump(3);
+  if (overlayVisible('menuOverlay')) { elementsById.playBtn.click(); pump(3); }
+} else { // mid-run: pause, quit to menu, start fresh
+  key('KeyP'); pump(2);
+  if (overlayVisible('pauseOverlay')) { key('KeyQ'); pump(3); }
+  if (overlayVisible('menuOverlay')) { elementsById.playBtn.click(); pump(3); }
+}
+pump(10);
+pumpSlow(200);
+const perfSlow = global.window.__nvbPerf;
+const slowBallArcs = frameArcs.filter((a) => a.r === 8);
+check('perf: 40ms frames engage low-perf', !!perfSlow && perfSlow.lowPerf === true && perfSlow.fps < 45,
+  'fps=' + (perfSlow && perfSlow.fps.toFixed(1)));
+check('perf: low-perf render drops shadowBlur on the ball',
+  slowBallArcs.length > 0 && slowBallArcs.every((a) => a.shadowBlur === 0),
+  'ballArcs=' + slowBallArcs.length + ' shadowBlur=' + (slowBallArcs[0] && slowBallArcs[0].shadowBlur));
+pump(400);
+const perfRec = global.window.__nvbPerf;
+check('perf: 60fps frames recover low-perf', !!perfRec && perfRec.lowPerf === false && perfRec.fps > 55,
+  'fps=' + (perfRec && perfRec.fps.toFixed(1)));
+
 console.log('\n== coverage report ==');
 console.log('attempts: ' + JSON.stringify(attemptResults));
 console.log('levels cleared: ' + JSON.stringify(obs.levelsCleared) + ' (max level reached ' + obs.maxLevel + ')');
@@ -654,6 +724,9 @@ console.log('powerups caught: ' + obs.powerupsCaught + ' · swallows: ' + obs.sw
 console.log('well bend: ' + obs.bend.toFixed(2) + ' rad over ' + obs.bendSamples + ' in-zone samples');
 console.log('boss: awakened=' + obs.bossAwaken + ' destroyed=' + obs.bossDestroyed
   + ' · fire seen=' + obs.fireSeen);
+console.log('block 14: srAnnounced=' + obs.srAnnounced
+  + ' · perf fps=' + (global.window.__nvbPerf && global.window.__nvbPerf.fps.toFixed(1))
+  + ' lowPerf=' + (global.window.__nvbPerf && global.window.__nvbPerf.lowPerf));
 console.log('paddle crossings: ' + obs.crossings + ' · bounces: ' + obs.bounces
   + ' · unresolved: ' + obs.unresolvedCrossings + ' · lost despite tracking: ' + obs.lostDespiteTracking);
 console.log('frames simulated: ' + obs.frames);
