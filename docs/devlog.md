@@ -205,6 +205,30 @@ description, a GitHub release blurb and a one-line tagline, plus a
 pre-flight checklist. Nothing in either file has been posted anywhere;
 posting is a human decision, and the sprint never auto-posts.
 
+## Block 21 — cross-browser check
+
+Block 21 closed backlog item #52. A new test, `tests/xbrowser.js`
+(Playwright), drives the real game in headless Chromium and Firefox:
+load, start a run, sweep the paddle for 25 seconds, pause and resume
+with P, open and close settings, flip the mute toggle — and asserts no
+console or page errors in either browser. Result: 32/32 checks PASS.
+Both browsers render the game identically (screenshots compared by eye:
+same neon wall, HUD, paddle and serving hint), score rises while
+sweeping, the run stays alive, FPS ~60 in Chromium and ~33 in headless
+Firefox (software rasterizer; the in-game FPS guard engages below 45
+as designed).
+
+Safari has no Linux binary, so it got a static audit instead: the game
+uses only broadly supported APIs — Canvas 2D, Web Audio with a
+`webkitAudioContext` fallback, Pointer Events, `localStorage` wrapped in
+try/catch, service-worker registration guarded to HTTP(S) — and no
+post-2020 JS (`roundRect`, `replaceAll`, `findLast`, `structuredClone`
+all absent). The audit did find three real gaps, all fixed in this
+block: `backdrop-filter` and `mask-image` had no `-webkit-` prefix (old
+Safari needs it), and the landscape `100dvh` cap had no `100vh`
+fallback. The bot harness still passes 143/143 on three runs, so
+nothing regressed.
+
 ## What's next
 
-Cross-browser checks, a final bugfix pass, and the v1.0 tag. See the roadmap in the README.
+A final bugfix pass, then the v1.0 tag. See the roadmap in the README.

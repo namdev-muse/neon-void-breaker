@@ -49,10 +49,11 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 - Save / continue (Block 18): your run auto-saves every 5s, on pause, and when the tab closes — refresh or come back later and CONTINUE on the menu picks up the same level, score, lives, upgrades and brick layout, with the ball re-served on the paddle
 - Difficulty curve smoothed (Block 18): the ball-speed ramp now saturates over ~2 levels instead of inside level 1, and level 2's first void well bends more gently — a human-like bot probe showed the old curve ended runs on the first well level
 - Fully responsive — desktop and mobile, no build step
+- Cross-browser verified (Block 21): the game plays identically in headless Chromium and Firefox 159 — same layout, same HUD, no console errors — via `node tests/xbrowser.js` (Playwright); Safari covered by a static audit plus `-webkit-` fallbacks for `backdrop-filter` / `mask-image` and a `100vh` fallback for `100dvh` (no Safari binary exists on Linux to run live)
 
 ## Coming up (12-hour sprint roadmap)
 
-Cross-browser and final bugfix passes, then a v1.0 release. Release notes
+Final bugfix pass, then a v1.0 release. Release notes
 and launch copy are drafted in [docs/release-notes-v1.0.md](docs/release-notes-v1.0.md)
 and [docs/launch-copy.md](docs/launch-copy.md). Follow the build in [docs/devlog.md](docs/devlog.md).
 
@@ -80,6 +81,15 @@ node tests/bot-harness.js 3 200000   # 3 attempts, 200k frames each
 ```
 
 The bot plays real runs in a stubbed DOM, tracks the ball with the paddle, drafts upgrades, and reports coverage (levels cleared, powerups caught, wells, boss, max combo) plus bug detectors: ball tunneling through the paddle, stuck balls, NaN positions/velocities, and per-frame speed violations. It exits non-zero if any detector fires or no level is cleared. Run it before every push.
+
+Cross-browser check — real browsers, via Playwright:
+
+```bash
+npm install playwright && npx playwright install chromium firefox
+NODE_PATH=/path/to/playwright/node_modules node tests/xbrowser.js
+```
+
+Drives the game in headless Chromium and Firefox: load, start a run, sweep the paddle, pause/resume, mute, settings, and asserts no console or page errors in either browser (32 checks). Safari has no Linux binary, so it is covered by a static audit — the game uses only broadly supported APIs (Canvas 2D, Web Audio with `webkitAudioContext` fallback, Pointer Events, `localStorage`, guarded service-worker registration) — plus `-webkit-` fallbacks in the CSS for `backdrop-filter` and `mask-image` and a `100vh` fallback for `100dvh`.
 
 ## Deploy
 
