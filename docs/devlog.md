@@ -104,6 +104,16 @@ A new `tests/live-smoke.js` checks the deployed site after every push —
 page, bundle and stylesheet all answer 200 and carry the current version
 — and retries while GitHub Pages finishes deploying.
 
+### Block 15 — Levels 7–10, seeded layouts, void bomb
+The run is now ten levels: Void Maze, Twin Peaks, The Gauntlet, and
+Event Horizon join the first six, each with its own void wells — and
+clearing level 10 wakes a second boss, the 16-HP Void Core Prime. Layouts
+vary by seed: every day plays the same walls, and `?seed=XXXX` shares a
+layout with a friend (the seed shows on the menu, and the same seed
+always builds the same wall — the harness proves it by comparing layout
+signatures). New powerup: the Void Bomb, a capsule that detonates at the
+ball nearest the bricks and shatters everything in a 160px radius.
+
 ## How the game is tested
 
 Every block runs `node tests/bot-harness.js` before pushing: a headless
@@ -123,6 +133,5 @@ taken mid-flight. No staged mockups — every pixel is the live game.
 
 ## What's next
 
-Levels 7–10, achievements, more powerups (including the void bomb),
-accessibility and cross-browser passes, PWA-lite polish, and a v1.0
-release tag. See the roadmap in the README.
+Achievements, more powerups, accessibility and cross-browser passes,
+PWA-lite polish, and a v1.0 release tag. See the roadmap in the README.
