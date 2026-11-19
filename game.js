@@ -2921,6 +2921,15 @@
   // menu can offer CONTINUE when the player comes back.
   window.addEventListener('beforeunload', () => { saveRun(); });
 
+  // Block 19 (#50): register the offline service worker. Guarded so a
+  // non-HTTPS preview, a file:// open, or a browser without SW support
+  // simply skips it — the game never depends on the worker to run.
+  if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => { /* offline is best-effort */ });
+    });
+  }
+
   // ---------- Buttons ----------
   playBtn.addEventListener('click', startRun);
   if (continueBtn) continueBtn.addEventListener('click', () => { ensureAudio(); restoreSave(); });
