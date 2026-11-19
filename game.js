@@ -172,6 +172,20 @@
   const menuScoresEl = $('menuScores'), gameOverScoresEl = $('gameOverScores');
   const playBtn = $('playBtn'), resumeBtn = $('resumeBtn');
   const againBtn = $('againBtn');
+  const srStatus = $('srStatus'); // #51: polite live region for announcements
+
+  // #51: screen-reader announcements — key events (run start, level clear,
+  // life lost, powerup caught, boss waking, draft, game over) go to a
+  // polite live region, so the game is playable by ear as well as by eye.
+  // The HUD stays readable on demand; only events are announced, so it
+  // never spams. A repeated message gets a trailing nbsp so it re-announces.
+  let lastAnnounce = '';
+  function announce(msg) {
+    if (!srStatus) return;
+    if (msg === lastAnnounce) msg += ' ';
+    lastAnnounce = msg;
+    srStatus.textContent = msg;
+  }
 
   // #41: keyboard focus helpers — overlays focus their primary action so a
   // keyboard-only player never has to hunt with Tab from the top of the page.
@@ -231,6 +245,29 @@
   const FIRE_DURATION = 10;
   const SHIELD_COLOR = '#00ffa3';
   let lastPowerText = '—';
+
+  // ---------- FPS guard (backlog #46) ----------
+  // The render degrades instead of stuttering: frame times feed an EMA,
+  // and sustained <45 FPS switches to low-perf mode (no shadowBlur, fewer
+  // particles, shorter ball trails) until FPS recovers above 55 for a
+  // while. shadowBlur is the expensive part — every glowing brick, ball,
+  // bolt and well pays for it each frame — so gating it through glow()
+  // is the whole perf pass in one place. The live state is exposed as
+  // window.__nvbPerf for the bot harness and the browser console.
+  let fpsEma = 60, lowPerf = false;
+  let lowFrames = 0, hiFrames = 0;
+  const PERF_LOW_FPS = 45, PERF_HI_FPS = 55;
+  const PERF_LOW_FRAMES = 120, PERF_HI_FRAMES = 300;
+  const PARTICLE_CAP = () => (lowPerf ? 150 : 400);
+  const CONFETTI_CAP = () => (lowPerf ? 100 : 220);
+  const TRAIL_LEN = () => (lowPerf ? 8 : 18);
+  const glow = (b) => (lowPerf ? 0 : b);
+
+  // #51: honor prefers-reduced-motion — no screen shake, no confetti, no
+  // intro zoom (the CSS side kills the animations). The game stays fully
+  // playable; only the motion garnish goes quiet.
+  const REDUCED_MOTION = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Powerup defs (backlog #1, #2, #3, #4, #5, #6, #7): glyph drawn on the capsule.
   const POWERUP_TYPES = {
@@ -719,6 +756,7 @@
     bricks.push(boss);
     floatText(W / 2, 200, BOSS_NAME + ' AWAKENS!', BOSS_COLOR);
     floatText(W / 2, 224, 'BREAK THE CORE TO CLEAR THE LEVEL', '#f2ecff');
+    announce('Warning. The Void Core has awakened. Break it to clear the level.');
     ringBurst(W / 2, 98, BOSS_COLOR, 260);
     burst(W / 2, 98, BOSS_COLOR, 40, 420);
     shake = Math.min(SHAKE_MAX, shake + 8);
@@ -820,6 +858,7 @@
     }
     burst(paddle.x + paddle.w / 2, PADDLE_Y, def.color, 16, 240);
     sfx.powerup();
+    announce(def.label + ' activated.');
     updateHUD();
   }
 
@@ -923,7 +962,7 @@
         color, size: 1.5 + Math.random() * 2.5,
       });
     }
-    if (particles.length > 400) particles.splice(0, particles.length - 400);
+    if (particles.length > PARTICLE_CAP()) particles.splice(0, particles.length - PARTICLE_CAP());
   }
 
   function floatText(x, y, str, color) {
@@ -949,6 +988,7 @@
   // sideways flutter, gone in ~3s. Capped so a rapid clear can't flood it.
   const CONFETTI_COLORS = ['#00f0ff', '#ff2d95', '#b6ff00', '#ffb300', '#8b5cff', '#ffffff'];
   function confettiBurst(n) {
+    if (REDUCED_MOTION) return; // #51: no raining paper when motion is reduced
     for (let i = 0; i < n; i++) {
       confetti.push({
         x: 20 + Math.random() * (W - 40),
@@ -963,7 +1003,7 @@
         phase: Math.random() * Math.PI * 2,
       });
     }
-    if (confetti.length > 220) confetti.splice(0, confetti.length - 220);
+    if (confetti.length > CONFETTI_CAP()) confetti.splice(0, confetti.length - CONFETTI_CAP());
   }
 
   // ---------- Flow ----------
@@ -996,6 +1036,7 @@
     hideOverlays();
     showIntro(level);
     mode = 'serving';
+    announce('Run started. Level 1: ' + (LEVEL_NAMES[0] || 'First Contact') + '.');
     updateHUD();
   }
 
@@ -1078,6 +1119,7 @@
     nextLevelBtn.textContent = last ? 'SEE RESULTS ▶' : 'DRAFT UPGRADE ▶';
     levelOverlay.classList.remove('hidden');
     focusEl(nextLevelBtn); // #41: keyboard focus lands on the continue button
+    announce('Level ' + level + ' clear. Bonus ' + bonus + ' points.' + (lifeRestored ? ' Plus one life.' : ''));
     updateHUD();
   }
 
@@ -1129,6 +1171,10 @@
       card.type = 'button';
       card.className = 'draft-card';
       card.style.borderColor = def.color;
+      // #51: a screen reader hears the name, what it does, and its key.
+      card.setAttribute('aria-label', def.name + ': ' + def.desc
+        + (owned ? ' Owned ' + owned + ' time' + (owned > 1 ? 's' : '') + '.' : '')
+        + ' Press ' + (i + 1) + ' to choose.');
       card.innerHTML = '<span class="draft-key">' + (i + 1) + '</span>'
         + '<span class="draft-glyph" style="color:' + def.color + '">' + def.glyph + '</span>'
         + '<span class="draft-name">' + def.name + '</span>'
@@ -1141,6 +1187,7 @@
     levelOverlay.classList.add('hidden');
     mode = 'draft';
     draftOverlay.classList.remove('hidden');
+    announce('Choose one upgrade. Press 1, 2 or 3.');
     focusEl(firstCard); // #41: keyboard focus lands on the first card
   }
 
@@ -1181,6 +1228,7 @@
     saveBest();
     saveScore();
     mode = 'gameover';
+    announce((win ? 'Victory. You conquered the void. ' : 'Game over. ') + 'Score ' + score + '.');
     if (win) sfx.win(); else sfx.over();
     gameOverTitle.textContent = win ? 'VOID CONQUERED!' : 'GAME OVER';
     gameOverStats.innerHTML = (isNewBest ? '<span class="new-best">★ NEW BEST! ★</span><br>' : '')
@@ -1206,6 +1254,7 @@
     combo = 0; comboTimer = 0;
     stats.ballsLost++;
     shotPending = false; // the pending shot died with the ball
+    announce('Ball lost. ' + Math.max(0, lives) + (lives === 1 ? ' life' : ' lives') + ' left.');
     if (!swallowed) {
       shake = 12;
       sfx.voidSwallow(); // #34: the void swallows the ball, not a plain buzz
@@ -1550,6 +1599,7 @@
     }
     shake *= Math.pow(0.001, dt);
     if (shake < 0.05) shake = 0;
+    if (REDUCED_MOTION) shake = 0; // #51: no screen shake when motion is reduced
 
     if (mode === 'playing') {
       if (combo > 0) {
@@ -1591,7 +1641,7 @@
       }
       for (const b of balls) {
         b.trail.push({ x: b.x, y: b.y });
-        if (b.trail.length > 18) b.trail.shift(); // #27: longer trail
+        if (b.trail.length > TRAIL_LEN()) b.trail.shift(); // #27: longer trail
       }
       // #31 / #6: at multiplier ×3+ the ball is ON FIRE — flame particles
       // stream off every live ball, announced once per hot streak. A
@@ -1604,7 +1654,7 @@
           floatText(W / 2, H / 2 - 60, 'ON FIRE! ×' + m, '#ff7b00');
         }
         for (const b of balls) {
-          for (let f = 0; f < 2 && particles.length < 400; f++) {
+          for (let f = 0; f < 2 && particles.length < PARTICLE_CAP(); f++) {
             particles.push({
               x: b.x + (Math.random() - 0.5) * 14, y: b.y + (Math.random() - 0.5) * 14,
               vx: (Math.random() - 0.5) * 40, vy: -60 - Math.random() * 90,
@@ -1676,7 +1726,7 @@
       ctx.save();
       ctx.globalAlpha = dim;
       ctx.shadowColor = fed ? '#555566' : '#b46bff';
-      ctx.shadowBlur = awake ? 16 : 6;
+      ctx.shadowBlur = glow(awake ? 16 : 6);
       ctx.strokeStyle = fed ? '#777788' : '#c9a7ff';
       ctx.lineWidth = 3;
       ctx.setLineDash([14, 9]);
@@ -1701,7 +1751,7 @@
       // Black core with a rim that flares pink when a ball is about to die.
       ctx.save();
       ctx.shadowColor = fed ? '#555566' : (w.danger > 0.6 ? '#ff2d95' : '#8b5cff');
-      ctx.shadowBlur = (awake ? 18 + 18 * w.danger : 6 + 10 * stir) * dim;
+      ctx.shadowBlur = glow((awake ? 18 + 18 * w.danger : 6 + 10 * stir) * dim);
       ctx.fillStyle = sated ? '#1a1030' : (fed ? '#1a1a26' : (awake ? '#05010f' : '#0d0820'));
       ctx.beginPath();
       ctx.arc(w.x, w.y, WELL_CORE_R, 0, Math.PI * 2);
@@ -1759,7 +1809,7 @@
       const color = b.boss ? BOSS_COLOR : BRICK_COLORS[b.hp];
       ctx.save();
       ctx.shadowColor = color;
-      ctx.shadowBlur = b.boss ? 18 + 8 * Math.sin(t * 5) : 10;
+      ctx.shadowBlur = glow(b.boss ? 18 + 8 * Math.sin(t * 5) : 10);
       ctx.fillStyle = color;
       ctx.globalAlpha = 0.92;
       rr(b.x, b.y, b.w, b.h, 5);
@@ -1809,7 +1859,7 @@
       const def = POWERUP_TYPES[p.type];
       ctx.save();
       ctx.shadowColor = def.color;
-      ctx.shadowBlur = 12;
+      ctx.shadowBlur = glow(12);
       ctx.fillStyle = def.color;
       rr(p.x - 13, p.y - 10, 26, 20, 8);
       ctx.fill();
@@ -1824,7 +1874,7 @@
     for (const b of bolts) {
       ctx.save();
       ctx.shadowColor = LASER_COLOR;
-      ctx.shadowBlur = 12;
+      ctx.shadowBlur = glow(12);
       ctx.fillStyle = LASER_COLOR;
       ctx.fillRect(b.x - 2, b.y - 9, 4, 18);
       ctx.restore();
@@ -1835,7 +1885,7 @@
     if (shieldActive) {
       ctx.save();
       ctx.shadowColor = SHIELD_COLOR;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = glow(10);
       ctx.fillStyle = SHIELD_COLOR;
       ctx.globalAlpha = 0.5 + 0.2 * Math.sin(t * 6);
       ctx.fillRect(8, H - 3, W - 16, 3);
@@ -1846,7 +1896,7 @@
     // Paddle.
     ctx.save();
     ctx.shadowColor = '#00f0ff';
-    ctx.shadowBlur = 14;
+    ctx.shadowBlur = glow(14);
     const pg = ctx.createLinearGradient(paddle.x, 0, paddle.x + paddle.w, 0);
     pg.addColorStop(0, '#00f0ff');
     pg.addColorStop(0.5, '#e8feff');
@@ -1875,7 +1925,7 @@
         ctx.globalAlpha = 1;
         ctx.save();
         ctx.shadowColor = hot ? '#ff7b00' : '#ffffff';
-        ctx.shadowBlur = hot ? 26 : 18;
+        ctx.shadowBlur = glow(hot ? 26 : 18);
         ctx.fillStyle = hot ? '#ffe9b0' : '#ffffff';
         ctx.beginPath();
         ctx.arc(b.x, b.y, BALL_R, 0, Math.PI * 2);
@@ -2068,10 +2118,32 @@
   menuOverlay.classList.remove('hidden');
   focusEl(playBtn); // #41: keyboard players start on PLAY, no Tab hunt
 
+  // #46: perf state for the bot harness and the browser console —
+  // `window.__nvbPerf.fps` (EMA), `.lowPerf`, `.reducedMotion`.
+  window.__nvbPerf = {
+    get fps() { return fpsEma; },
+    get lowPerf() { return lowPerf; },
+    get reducedMotion() { return REDUCED_MOTION; },
+  };
+
   let last = performance.now();
   function frame(now) {
-    const dt = Math.min(0.033, (now - last) / 1000);
+    const rawDt = (now - last) / 1000;
+    const dt = Math.min(0.033, rawDt);
     last = now;
+    // #46: FPS guard sampling — the EMA tracks real frame time (not the
+    // capped dt), so a struggling machine is detected even though the
+    // simulation itself caps dt at 33ms. 120 slow frames engage low-perf;
+    // 300 fast frames recover it. The <1s guard ignores the first frame
+    // after a tab switch, which would otherwise read as one huge frame.
+    if (rawDt > 0 && rawDt < 1) {
+      fpsEma = fpsEma * 0.95 + (1 / rawDt) * 0.05;
+      if (fpsEma < PERF_LOW_FPS) { lowFrames++; hiFrames = 0; }
+      else if (fpsEma > PERF_HI_FPS) { hiFrames++; lowFrames = 0; }
+      else { lowFrames = 0; hiFrames = 0; }
+      if (!lowPerf && lowFrames >= PERF_LOW_FRAMES) { lowPerf = true; lowFrames = 0; }
+      else if (lowPerf && hiFrames >= PERF_HI_FRAMES) { lowPerf = false; hiFrames = 0; }
+    }
     if (hitStop > 0) {
       // #26: freeze the simulation for a beat; keep rendering so the
       // flash/ring/shake read as one frozen impact frame.

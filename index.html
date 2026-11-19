@@ -30,18 +30,22 @@
   </section>
 
   <section class="stage">
-    <canvas id="game" width="720" height="540" aria-label="Neon Void Breaker game canvas"></canvas>
+    <canvas id="game" width="720" height="540" role="img" aria-label="Neon Void Breaker game canvas"></canvas>
 
-    <div id="menuOverlay" class="overlay">
-      <h1>NEON VOID<br>BREAKER</h1>
+    <!-- #51: polite live region — the game announces level clears, lost
+         balls, powerups and game over here for screen-reader players. -->
+    <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
+
+    <div id="menuOverlay" class="overlay" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
+      <h1 id="menuTitle">NEON VOID<br>BREAKER</h1>
       <p class="tagline">Break bricks. Build combos.<br>Don't fall into the void.</p>
       <button id="playBtn" class="btn btn-primary" type="button">▶ &nbsp;PLAY</button>
       <p class="howto">Move with mouse, touch drag, or ← → keys.<br>Space to launch · fires the laser while LASER is active · P pause · R resume · Q quit · M mute.</p>
       <div id="menuScores" class="scores"></div>
     </div>
 
-    <div id="pauseOverlay" class="overlay hidden">
-      <h2>PAUSED</h2>
+    <div id="pauseOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
+      <h2 id="pauseTitle">PAUSED</h2>
       <p class="tagline">The void waits for no one. Well — just this once.</p>
       <p id="pauseStats" class="tagline"></p>
       <button id="resumeBtn" class="btn btn-primary" type="button">▶ &nbsp;RESUME</button>
@@ -49,20 +53,20 @@
       <button id="quitBtnPause" class="btn btn-ghost" type="button">QUIT TO MENU</button>
     </div>
 
-    <div id="levelOverlay" class="overlay hidden">
+    <div id="levelOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="levelTitle">
       <h2 id="levelTitle">LEVEL CLEAR!</h2>
       <p id="levelStats" class="tagline"></p>
       <button id="nextLevelBtn" class="btn btn-primary" type="button">DRAFT UPGRADE ▶</button>
     </div>
 
-    <div id="draftOverlay" class="overlay hidden">
-      <h2>CHOOSE AN UPGRADE</h2>
+    <div id="draftOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="draftTitle">
+      <h2 id="draftTitle">CHOOSE AN UPGRADE</h2>
       <p class="tagline">The void offers a bargain. Pick one — it lasts the whole run.</p>
       <div id="draftCards" class="draft-cards"></div>
       <p class="howto">Click a card or press 1 / 2 / 3</p>
     </div>
 
-    <div id="gameOverOverlay" class="overlay hidden">
+    <div id="gameOverOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="gameOverTitle">
       <h2 id="gameOverTitle">GAME OVER</h2>
       <p id="gameOverStats" class="tagline"></p>
       <div id="gameOverScores" class="scores"></div>
@@ -84,7 +88,7 @@
 
   <footer class="foot">
     <span>Built by Iggy · <a href="https://github.com/namdev-muse/neon-void-breaker">GitHub</a></span>
-    <span id="version">v0.13.0 — Sprint Block 13</span>
+    <span id="version">v0.14.0 — Sprint Block 14</span>
   </footer>
 </main>
 <script src="game.js"></script>
