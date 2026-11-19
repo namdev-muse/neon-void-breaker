@@ -114,6 +114,26 @@ always builds the same wall — the harness proves it by comparing layout
 signatures). New powerup: the Void Bomb, a capsule that detonates at the
 ball nearest the bricks and shatters everything in a 160px radius.
 
+### Block 17 — Moving, exploding and regenerating bricks + boss music
+
+Three new brick types join the walls on levels 2–10. Green ↔ movers
+slide sideways around their home column (±28px at 36px/s, alternating
+direction by column so a row doesn't march in lockstep); orange ✸
+exploders chain-damage all 8 neighbours for 1 HP when destroyed, and a
+neighbour that dies as an exploder detonates in turn — the chain only
+runs downhill, because damage is only ever dealt to live bricks, and a
+chain that finishes the wall clears the level exactly once (the clear
+check returns early if the blast already fired it). Sky-blue ↻
+regenerators take 2 hits and come back 20 seconds after being broken,
+at most twice each — clear the rest of the wall fast enough and the
+level still ends before they return; a faint ghost outline with a
+refill bar and a rising shimmer SFX mark where one is about to heal.
+Movers only slide while playing, never on the serve, so the seeded
+layout signature the harness compares at serve time stays
+deterministic. For the block's audio theme, a live Void Core swaps the
+music to a darker Am–F–E–G progression and holds the intensity at ×3
+for the whole boss fight.
+
 ## How the game is tested
 
 Every block runs `node tests/bot-harness.js` before pushing: a headless

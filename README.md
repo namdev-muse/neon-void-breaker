@@ -28,6 +28,7 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 ## Features
 
 - 10 hand-designed levels with multi-hit bricks (Block 15)
+- New brick types (Block 17): green ↔ movers slide sideways across their row, orange ✸ exploders chain-damage all 8 neighbours when destroyed (and chain into each other), and sky-blue ↻ regenerators come back 20s after being broken — twice each — unless you clear the level first; a ghost outline with a refill bar shows where one is about to return
 - Void gravity wells (Block 9): from level 2, black holes bend the ball's path inside their telegraphed pull ring and swallow any ball that crosses the event horizon — then go sated for 5s. Each well wakes for 2.5s of every 8s cycle and stirs visibly for 1s first (the ring brightens), so you can time your shots around it; watch the rim flare pink as a ball nears the maw. A well eats at most one ball per level — once fed it only bends the ball, harmlessly. Serves are shielded from the wells for 1.2s, and the paddle respawns at center after a swallow. Level 5 hides one big maw dead center
 - Powerups: multi-ball, wide paddle, laser paddle (Space to shoot, 12s), slow-mo (0.6× ball speed, 10s), shield (bottom net saves one lost ball), fireball (piercing ball, 10s), and void bomb (160px blast that shatters nearby bricks, 2 HP each) drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers as coloured chips with countdown bars (Block 11, Block 12, Block 15)
 - Seeded level variations (Block 15): layouts vary by seed — everyone plays the same walls each day, and `?seed=XXXX` in the URL shares one; the seed shows on the menu
@@ -43,7 +44,7 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 - Juice: particles, screen shake that scales with break size and combo, hit-stop freeze frames, impact flashes, shockwave rings, long ball trail, floating score popups, level-clear confetti burst (Block 12)
 - Synthesized Web Audio sound effects (zero audio files)
 - Auto-play bot harness (Block 11): `node tests/bot-harness.js` plays full runs headlessly in a stubbed DOM and reports coverage (levels cleared, powerups, wells, boss) plus bug detectors for ball tunneling, stuck balls and NaN velocities — run it before every push
-- Background music loop: synth arpeggio (Am–F–C–G) with bass and hats that intensify as your combo multiplier climbs (Block 5)
+- Background music loop: synth arpeggio (Am–F–C–G) with bass and hats that intensify as your combo multiplier climbs (Block 5); while a Void Core lives, the music turns darker (Am–F–E–G) and holds at ×3 intensity for the boss fight (Block 17)
 - High score saved locally, auto-pause when the tab hides
 - Fully responsive — desktop and mobile, no build step
 
