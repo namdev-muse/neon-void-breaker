@@ -747,7 +747,25 @@ check('audit: NaN velocity guard present', SRC.includes('Number.isFinite(ball.vx
 
 console.log('== HTML ==');
 const html = fs.readFileSync(HTML, 'utf8');
-check('HTML: version v0.18.0', html.includes('v0.18.0'));
+check('HTML: version v0.19.0', html.includes('v0.19.0'));
+
+// Block 19 (#50, #53, #54): PWA-lite polish — real favicon, manifest,
+// social meta, offline service worker.
+check('PWA: favicon.svg linked', html.includes('rel="icon" type="image/svg+xml" href="favicon.svg"'));
+check('PWA: apple-touch-icon linked', html.includes('rel="apple-touch-icon" href="apple-touch-icon.png"'));
+check('PWA: manifest linked', html.includes('rel="manifest" href="manifest.webmanifest"'));
+check('PWA: og:image + twitter card meta', html.includes('og:image') && html.includes('docs/screenshot-gameplay.png') && html.includes('twitter:card') && html.includes('summary_large_image'));
+check('PWA: no inline data-URI favicon left', !html.includes('data:image/svg+xml'));
+let manifest = null;
+try { manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.webmanifest'), 'utf8')); } catch (e) { /* fail below */ }
+check('PWA: manifest parses + name/icons/theme', !!manifest && manifest.name === 'Neon Void Breaker'
+  && manifest.theme_color === '#0b0620' && manifest.display === 'standalone'
+  && manifest.icons.some((i) => i.sizes === '192x192') && manifest.icons.some((i) => i.sizes === '512x512'));
+const pngMagic = (p) => fs.readFileSync(p).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+check('PWA: icon PNGs exist + valid (192/512/180)', ['icon-192.png', 'icon-512.png', 'apple-touch-icon.png'].every((f) => { try { return pngMagic(path.join(ROOT, f)); } catch (e) { return false; } }));
+const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+check('PWA: sw.js caches shell + versioned cache', sw.includes("const CACHE = 'nvb-v0.19.0'") && ['index.html', 'style.css', 'game.js', 'favicon.svg', 'manifest.webmanifest'].every((a) => sw.includes("'" + a + "'")));
+check('PWA: SW registration guarded in game.js', SRC.includes("'serviceWorker' in navigator") && SRC.includes("navigator.serviceWorker.register('sw.js')") && SRC.includes("protocol.startsWith('http')"));
 
 console.log('== bot playtest (#45) ==');
 let attemptResults = [];
