@@ -747,7 +747,7 @@ check('audit: NaN velocity guard present', SRC.includes('Number.isFinite(ball.vx
 
 console.log('== HTML ==');
 const html = fs.readFileSync(HTML, 'utf8');
-check('HTML: version v0.19.0', html.includes('v0.19.0'));
+check('HTML: version v0.20.0', html.includes('v0.20.0'));
 
 // Block 19 (#50, #53, #54): PWA-lite polish — real favicon, manifest,
 // social meta, offline service worker.
@@ -764,7 +764,7 @@ check('PWA: manifest parses + name/icons/theme', !!manifest && manifest.name ===
 const pngMagic = (p) => fs.readFileSync(p).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
 check('PWA: icon PNGs exist + valid (192/512/180)', ['icon-192.png', 'icon-512.png', 'apple-touch-icon.png'].every((f) => { try { return pngMagic(path.join(ROOT, f)); } catch (e) { return false; } }));
 const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
-check('PWA: sw.js caches shell + versioned cache', sw.includes("const CACHE = 'nvb-v0.19.0'") && ['index.html', 'style.css', 'game.js', 'favicon.svg', 'manifest.webmanifest'].every((a) => sw.includes("'" + a + "'")));
+check('PWA: sw.js caches shell + versioned cache', sw.includes("const CACHE = 'nvb-v0.20.0'") && ['index.html', 'style.css', 'game.js', 'favicon.svg', 'manifest.webmanifest'].every((a) => sw.includes("'" + a + "'")));
 check('PWA: SW registration guarded in game.js', SRC.includes("'serviceWorker' in navigator") && SRC.includes("navigator.serviceWorker.register('sw.js')") && SRC.includes("protocol.startsWith('http')"));
 
 console.log('== bot playtest (#45) ==');

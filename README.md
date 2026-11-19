@@ -52,8 +52,9 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 ## Coming up (12-hour sprint roadmap)
 
-Achievements, more powerups, accessibility and cross-browser passes,
-PWA-lite polish, and a v1.0 release. Follow the build in [docs/devlog.md](docs/devlog.md).
+Cross-browser and final bugfix passes, then a v1.0 release. Release notes
+and launch copy are drafted in [docs/release-notes-v1.0.md](docs/release-notes-v1.0.md)
+and [docs/launch-copy.md](docs/launch-copy.md). Follow the build in [docs/devlog.md](docs/devlog.md).
 
 ## Tech
 

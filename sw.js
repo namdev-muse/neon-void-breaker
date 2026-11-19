@@ -3,7 +3,7 @@
 // after the first visit. Bumped CACHE on every release so a new deploy
 // replaces the old shell instead of serving it forever.
 'use strict';
-const CACHE = 'nvb-v0.19.0';
+const CACHE = 'nvb-v0.20.0';
 const ASSETS = [
   './',
   'index.html',

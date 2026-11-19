@@ -193,6 +193,18 @@ runs over HTTP(S) in browsers with service-worker support, and a failed
 registration is silently ignored, so the game never depends on the
 worker to play.
 
+## Block 20 — launch copy drafts
+
+With the game essentially complete, Block 20 wrote the words that will
+announce it. `docs/release-notes-v1.0.md` is the full v1.0 release notes —
+what's in the game, how a run works, controls, known limitations — marked
+DRAFT until the v1.0 tag lands in Block 23, when the banner comes off and
+the notes go into the GitHub release. `docs/launch-copy.md` is the launch
+pack: a devlog launch post, three short social posts, an itch.io page
+description, a GitHub release blurb and a one-line tagline, plus a
+pre-flight checklist. Nothing in either file has been posted anywhere;
+posting is a human decision, and the sprint never auto-posts.
+
 ## What's next
 
-Cross-browser checks, release notes and a v1.0 tag. See the roadmap in the README.
+Cross-browser checks, a final bugfix pass, and the v1.0 tag. See the roadmap in the README.
