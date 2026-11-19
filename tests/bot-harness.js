@@ -19,8 +19,8 @@ const SRC = fs.readFileSync(GAME, 'utf8');
 // and capsules home hard to the paddle so catches are deterministic.
 const SRC12 = SRC
   .replace("if (Math.random() >= (chance || POWERUP_DROP_CHANCE)) return;", "")
-  .replace("const type = r < 0.22 ? 'multi' : r < 0.40 ? 'wide' : r < 0.58 ? 'laser' : r < 0.71 ? 'slow' : r < 0.85 ? 'shield' : 'fire';",
-    "const type = ['laser','slow','shield','multi','wide','fire'][(global.__pu = (global.__pu || 0) + 1) % 6];")
+  .replace("const type = r < 0.20 ? 'multi' : r < 0.36 ? 'wide' : r < 0.52 ? 'laser' : r < 0.64 ? 'slow' : r < 0.76 ? 'shield' : r < 0.88 ? 'fire' : 'bomb';",
+    "const type = ['laser','slow','shield','multi','wide','fire','bomb'][(global.__pu = (global.__pu || 0) + 1) % 7];")
   .replace("const mag = upgradesOwned.magnet || 0;", "const mag = 3;");
 if (SRC12 === SRC || SRC12.indexOf("global.__pu") < 0) { console.log('PATCH FAILED'); process.exit(2); }
 
@@ -131,7 +131,7 @@ const IDS = ['score', 'best', 'level', 'lives', 'combo', 'power', 'menuOverlay',
   'draftCards', 'introLevel', 'introName', 'introFlavor', 'levelTitle', 'levelStats',
   'gameOverTitle', 'gameOverStats', 'nextLevelBtn', 'muteBtn', 'pauseBtn', 'pauseStats',
   'menuScores', 'gameOverScores', 'playBtn', 'resumeBtn', 'restartBtnPause',
-  'quitBtnPause', 'againBtn', 'menuBtnOver', 'srStatus'];
+  'quitBtnPause', 'againBtn', 'menuBtnOver', 'srStatus', 'seedLine'];
 for (const id of IDS) {
   const tag = /Btn$/.test(id) ? 'BUTTON' : (id.endsWith('Overlay') || id === 'draftCards' ? 'DIV' : 'SPAN');
   makeEl(tag, id);
@@ -149,6 +149,10 @@ const docListeners = {};
 global.window = {
   AudioContext: FakeAudioContext, webkitAudioContext: undefined,
   devicePixelRatio: 1,
+  // Block 15 (#12): NVB_SEED=<code> loads the game with ?seed=<code>, so a
+  // second process run can prove a different seed builds a different wall.
+  // Without it, location is undefined and the game falls back to the daily seed.
+  location: process.env.NVB_SEED ? { search: '?seed=' + process.env.NVB_SEED } : undefined,
   addEventListener(type, fn) { (winListeners[type] = winListeners[type] || []).push(fn); },
 };
 global.document = {
@@ -192,6 +196,9 @@ const obs = {
   // Block 14 observations (#46 FPS guard, #51 accessibility)
   srAnnounced: false,
   levelsCleared: [], maxLevel: 1, finalScore: 0,
+  // Block 15 observations (#12 seeds, #16 void bomb)
+  bombSeen: false, bombBroke: false, bombMaxDelta: 0, bombCount: 0,
+  bootSig: '', brickSigs: [],
 };
 let prevBall = null, prevLives = 3, prevScore = 0, prevAngle = null, prevInZone = false;
 let fireCheckFrame = -1, fireAngleBefore = 0; // Block 12: pierce check state
@@ -237,6 +244,8 @@ function observe() {
   if (lv > obs.maxLevel) obs.maxLevel = lv;
   const scoreJump = sc > prevScore;
   if (sc < prevScore) obs.nanEvents.push('score decreased ' + prevScore + ' -> ' + sc);
+  const scBefore = prevScore; // Block 15: score before this frame, so a bomb
+  // detonation's same-frame score delta proves the blast broke bricks.
   prevScore = sc;
   const c = parseInt((elementsById.combo.textContent || '×1').replace('×', ''), 10) || 1;
   if (c > obs.maxCombo) obs.maxCombo = c;
@@ -250,7 +259,17 @@ function observe() {
     if (prevTexts.has(t)) continue;
     if (t === 'SWALLOWED!') obs.swallows++;
     else if (t === 'VOID PULL!') obs.pullWarns++;
-    else if (t === 'MULTI-BALL!' || t === 'WIDE PADDLE!' || t === 'LASER PADDLE!' || t === 'SLOW-MO!' || t === 'SHIELD UP!' || t === 'FIREBALL!') obs.powerupsCaught++;
+    else if (t === 'MULTI-BALL!' || t === 'WIDE PADDLE!' || t === 'LASER PADDLE!' || t === 'SLOW-MO!' || t === 'SHIELD UP!' || t === 'FIREBALL!' || t === 'VOID BOMB!') obs.powerupsCaught++;
+    // Block 15 (#16): the bomb's blast damage lands in the same frame as
+    // the announcement (damage first, text second), so a same-frame score
+    // jump of >= 50 proves the blast shattered at least one brick. The
+    // ball can add to the same frame's delta, never subtract from it.
+    if (t === 'VOID BOMB!') {
+      obs.bombSeen = true; obs.bombCount++;
+      const d = sc - scBefore;
+      if (d > obs.bombMaxDelta) obs.bombMaxDelta = d;
+      if (d >= 50) obs.bombBroke = true;
+    }
     // Seen flags are independent ifs, not else-ifs: the combined branch
     // above already matches these texts, so an else-if here never fires.
     if (t === 'LASER PADDLE!') obs.laserSeen = true;
@@ -500,7 +519,7 @@ function advanceLevel() {
 let laserTested = false, shieldTested = false, dropTest = false;
 let dropFrames = 0, shieldLivesBefore = 0;
 
-// Play one attempt until game over, level 6 cleared, or the frame budget
+// Play one attempt until game over, level 10 cleared, or the frame budget
 // runs out. Returns 'clear' | 'over' | 'timeout' | 'menu'.
 function aiPlay(maxFrames) {
   let frames = 0;
@@ -550,6 +569,11 @@ function aiPlay(maxFrames) {
 // ---------- load the game ----------
 eval(SRC12); // eslint-disable-line no-eval
 pump(5);
+// Block 15 (#12): the pristine boot signature — level 1, menu mode, no
+// brick broken yet. The determinism check compares the first attempt's
+// fresh level-1 signature against this one; attempt 2 may start mid-run
+// after a timeout, so its signature is informational only.
+obs.bootSig = global.window.__nvbMeta ? global.window.__nvbMeta.levelSig : 'n/a';
 
 console.log('== boot ==');
 check('boot: menu overlay visible', overlayVisible('menuOverlay'));
@@ -565,7 +589,7 @@ check('audit: NaN velocity guard present', SRC.includes('Number.isFinite(ball.vx
 
 console.log('== HTML ==');
 const html = fs.readFileSync(HTML, 'utf8');
-check('HTML: version v0.14.0', html.includes('v0.14.0'));
+check('HTML: version v0.15.0', html.includes('v0.15.0'));
 
 console.log('== bot playtest (#45) ==');
 let attemptResults = [];
@@ -577,6 +601,11 @@ for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
   if (overlayVisible('menuOverlay')) { elementsById.playBtn.click(); pump(3); }
   else if (overlayVisible('gameOverOverlay')) { key('Enter', bodyEl); pump(3); }
   // else: already in a run (restarted at the end of the previous attempt)
+  // Block 15 (#12): snapshot the level-1 layout signature right after the
+  // serve starts — no brick can be broken yet, so two attempts with the
+  // same seed must produce identical signatures.
+  pump(2);
+  obs.brickSigs.push(global.window.__nvbMeta ? global.window.__nvbMeta.levelSig : 'n/a');
   // Regression checks on the first attempt, once play has started.
   if (attempt === 1) {
     pump(30);
@@ -592,7 +621,8 @@ for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
   const clearedBefore = obs.levelsCleared.length;
   let result = aiPlay(MAX_FRAMES);
   let guard = 0;
-  while (result === 'clear' && guard++ < 8) {
+  // Block 15: 10 levels need up to 9 advances per attempt (was 8 for 6).
+  while (result === 'clear' && guard++ < 12) {
     if (!advanceLevel()) {
       // No draft opened: either the final level was cleared (Space advanced
       // straight to the win screen — a win, not a failure) or the draft
@@ -710,6 +740,34 @@ const perfRec = global.window.__nvbPerf;
 check('perf: 60fps frames recover low-perf', !!perfRec && perfRec.lowPerf === false && perfRec.fps > 55,
   'fps=' + (perfRec && perfRec.fps.toFixed(1)));
 
+console.log('== Block 15 (#12 seeds, #16 void bomb, #19 levels 7-10) ==');
+const meta = global.window.__nvbMeta;
+const _d = new Date();
+const todayStr = String(_d.getFullYear()) + String(_d.getMonth() + 1).padStart(2, '0') + String(_d.getDate()).padStart(2, '0');
+const expectSeed = process.env.NVB_SEED ? process.env.NVB_SEED.toUpperCase() : todayStr;
+check('levels: 10 levels in the run', !!meta && meta.levels === 10, 'levels=' + (meta && meta.levels));
+check('levels: names 7-10 present', SRC.includes("'VOID MAZE'") && SRC.includes("'TWIN PEAKS'")
+  && SRC.includes("'THE GAUNTLET'") && SRC.includes("'EVENT HORIZON'"));
+check('levels: wells defined for levels 7-10', (SRC.match(/VOID_WELLS = \[([\s\S]*?)\];/) || ['', ''])[1].split('\n').filter((l) => l.trim().startsWith('[{') || l.trim().startsWith('[]')).length >= 10);
+check('levels: level-10 boss (VOID CORE PRIME, 16 HP) present',
+  SRC.includes('VOID CORE PRIME') && SRC.includes('BOSS_LEVELS') && SRC.includes('10: { hp: 16'));
+check('seed: __nvbMeta exposed with seed + levelSig',
+  !!meta && typeof meta.seed === 'string' && meta.seed.length > 0 && typeof meta.levelSig === 'string' && meta.levelSig.length > 0,
+  'seed=' + (meta && meta.seed));
+check('seed: seed is ' + expectSeed + (process.env.NVB_SEED ? ' (NVB_SEED)' : ' (daily)'),
+  !!meta && meta.seed === expectSeed, 'seed=' + (meta && meta.seed));
+check('seed: menu shows the seed line', (elementsById.seedLine.textContent || '').indexOf(expectSeed) >= 0,
+  'seedLine=' + JSON.stringify(elementsById.seedLine.textContent));
+check('seed: same seed builds the same level-1 layout (boot vs attempt 1)',
+  obs.bootSig !== 'n/a' && obs.brickSigs.length >= 1 && obs.bootSig === obs.brickSigs[0],
+  'bootLen=' + obs.bootSig.length + ' attempt1Len=' + (obs.brickSigs[0] && obs.brickSigs[0].length));
+check('bomb: VOID BOMB! announced', obs.bombSeen, 'detonations=' + obs.bombCount);
+check('bomb: blast broke bricks (max same-frame score delta ' + obs.bombMaxDelta + ')',
+  obs.bombBroke, 'detonations=' + obs.bombCount + ' maxDelta=' + obs.bombMaxDelta);
+check('bomb: capsule type in the drop pool', SRC.includes("bomb: { label: 'VOID BOMB'"));
+check('bomb: detonateBomb damages in a radius via damageBrick',
+  SRC.includes('function detonateBomb') && SRC.includes('BOMB_RADIUS') && SRC.includes('damageBrick(br)'));
+
 console.log('\n== coverage report ==');
 console.log('attempts: ' + JSON.stringify(attemptResults));
 console.log('levels cleared: ' + JSON.stringify(obs.levelsCleared) + ' (max level reached ' + obs.maxLevel + ')');
@@ -727,6 +785,13 @@ console.log('boss: awakened=' + obs.bossAwaken + ' destroyed=' + obs.bossDestroy
 console.log('block 14: srAnnounced=' + obs.srAnnounced
   + ' · perf fps=' + (global.window.__nvbPerf && global.window.__nvbPerf.fps.toFixed(1))
   + ' lowPerf=' + (global.window.__nvbPerf && global.window.__nvbPerf.lowPerf));
+console.log('block 15: seed=' + (global.window.__nvbMeta && global.window.__nvbMeta.seed)
+  + ' daily=' + (global.window.__nvbMeta && global.window.__nvbMeta.dailySeed)
+  + ' levels=' + (global.window.__nvbMeta && global.window.__nvbMeta.levels)
+  + ' · bomb seen=' + obs.bombSeen + ' detonations=' + obs.bombCount
+  + ' maxDelta=' + obs.bombMaxDelta + ' broke=' + obs.bombBroke);
+console.log('brick signatures: boot=' + JSON.stringify(obs.bootSig)
+  + ' attempts=' + JSON.stringify(obs.brickSigs));
 console.log('paddle crossings: ' + obs.crossings + ' · bounces: ' + obs.bounces
   + ' · unresolved: ' + obs.unresolvedCrossings + ' · lost despite tracking: ' + obs.lostDespiteTracking);
 console.log('frames simulated: ' + obs.frames);
