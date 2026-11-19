@@ -192,6 +192,10 @@ canvas {
 
 .overlay.hidden { display: none; }
 
+/* Block 18 (#49): the menu's CONTINUE button only shows when a saved
+   run exists — same hide-by-class pattern as the overlays. */
+#continueBtn.hidden { display: none; }
+
 /* Level intro card (Block 2): light, non-blocking, fades on its own. */
 .overlay.intro {
   background: rgba(7, 3, 18, 0.45);

@@ -230,7 +230,11 @@
   const WELL_STIR = 1.0;     // seconds of visible stirring before waking
   const VOID_WELLS = [
     [],
-    [{ x: 200, y: 340 }],
+    // Block 18 (#62): level 2's first well bends gently (0.6, not the
+    // default 0.8) — it is the player's first meeting with the void, and
+    // the human-bot probe showed the 0.8 bend + the old speed ramp
+    // together ended runs on level 2. Later wells keep the full bend.
+    [{ x: 200, y: 340, bend: 0.6 }],
     [{ x: 520, y: 360 }],
     [{ x: 200, y: 350 }, { x: 520, y: 350 }],
     [{ x: 360, y: 380, pullR: 150, horizon: 12, bend: 1.2 }],
@@ -333,6 +337,7 @@
   const menuScoresEl = $('menuScores'), gameOverScoresEl = $('gameOverScores');
   const seedLineEl = $('seedLine'); // #12: menu line showing the run seed
   const playBtn = $('playBtn'), resumeBtn = $('resumeBtn');
+  const continueBtn = $('continueBtn'); // Block 18 (#49): resume a saved run
   const againBtn = $('againBtn');
   const srStatus = $('srStatus'); // #51: polite live region for announcements
 
@@ -745,7 +750,13 @@
   // with bricks broken this run; the combo window tightens on later levels.
   // #10: BALL CONTROL stacks slow the ball 8% each (max 3).
   // #4: SLOW-MO multiplies the speed by 0.6 while its timer runs.
-  const ballSpeed = () => Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * 36 + Math.min(120, bricksBrokenRun * 2)) * (1 - 0.08 * (upgradesOwned.control || 0)) * (slowTimer > 0 ? SLOW_FACTOR : 1);
+  // Block 18 (#62): the ball's speed ramp — base + per-level + per-brick.
+  // The per-brick term is ×1, not ×2: with ×2 it saturated (+120) inside
+  // level 1, so a new player met level 2 — and their first void well —
+  // at 536px/s, 40% faster than the 380 they had just learned on. At ×1
+  // the cap takes ~120 bricks (~2 levels) to reach, so level 2 starts at
+  // 476 and the late game still caps at MAX_SPEED 680.
+  const ballSpeed = () => Math.min(MAX_SPEED, BASE_SPEED + (level - 1) * 36 + Math.min(120, bricksBrokenRun * 1)) * (1 - 0.08 * (upgradesOwned.control || 0)) * (slowTimer > 0 ? SLOW_FACTOR : 1);
   const comboWindow = () => Math.max(1.8, COMBO_WINDOW - (level - 1) * 0.12);
   const levelClearBonus = () => 100 * level;
   // #10: permanent paddle width from WIDE PADDLE stacks (+18px each, max 3).
@@ -904,6 +915,155 @@
   function fmtTime(ms) {
     const s = Math.floor(ms / 1000);
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  // ---------- Save / restore run state (backlog #49, Block 18) ----------
+  // A mid-run snapshot in localStorage ('nvb-save', versioned), so closing
+  // the tab or refreshing mid-run doesn't lose the run: the menu offers a
+  // CONTINUE button that picks up where the player left off. The snapshot
+  // holds the whole level — brick states (HP, kind, mover position, regen
+  // countdown), well phases and meals, falling capsules, powerup timers,
+  // upgrades, stats and the run clock — but NOT live balls: restoring
+  // re-serves them glued to the paddle, because a mid-flight ball restored
+  // on top of a brick or inside a well could tunnel or feed itself to the
+  // maw before the player touches a key. Save points: every 5s of live
+  // play, on pause, and on entering a fresh level; a refresh or tab-close
+  // also saves via beforeunload. Only playing / serving / paused states
+  // save — a draft or a level-clear screen is never a restore point, so a
+  // refresh there falls back to the last live-play snapshot. The save is
+  // cleared when the run ends (game over) or a fresh run starts (PLAY);
+  // quitting to the menu keeps it, so CONTINUE works after a quit too.
+  const SAVE_KEY = 'nvb-save';
+  const SAVE_VERSION = 1;
+  let saveTimer = 0; // seconds of live play since the last autosave
+
+  function readSave() {
+    let raw = null;
+    try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    let s = null;
+    try { s = JSON.parse(raw); } catch (e) { return null; }
+    if (!s || s.v !== SAVE_VERSION) return null;
+    if (!Number.isInteger(s.level) || s.level < 1 || s.level > LEVELS.length) return null;
+    if (!Number.isInteger(s.lives) || s.lives < 1 || s.lives > MAX_LIVES) return null;
+    if (typeof s.score !== 'number' || !Number.isFinite(s.score) || s.score < 0) return null;
+    if (!Array.isArray(s.bricks) || !s.bricks.length) return null;
+    if (!s.paddle || typeof s.paddle.x !== 'number' || typeof s.paddle.w !== 'number') return null;
+    if (!Array.isArray(s.wells) || !s.timers || typeof s.timers !== 'object') return null;
+    for (const b of s.bricks) {
+      if (typeof b.x !== 'number' || typeof b.y !== 'number'
+        || typeof b.hp !== 'number' || typeof b.maxHp !== 'number') return null;
+    }
+    return s;
+  }
+
+  function hasSave() { return !!readSave(); }
+
+  function updateContinueBtn() {
+    if (!continueBtn) return;
+    const s = readSave();
+    if (s) {
+      continueBtn.classList.remove('hidden');
+      continueBtn.textContent = '▶ CONTINUE — LEVEL ' + s.level + ' · ' + s.score + ' PTS';
+      continueBtn.setAttribute('aria-label', 'Continue saved run: level ' + s.level
+        + ', score ' + s.score + ', ' + s.lives + ' lives.');
+    } else {
+      continueBtn.classList.add('hidden');
+    }
+  }
+
+  function saveRun() {
+    if (mode !== 'playing' && mode !== 'serving' && mode !== 'paused') return false;
+    if (!bricks.length) return false;
+    const data = {
+      v: SAVE_VERSION, savedAt: Date.now(), seed: SEED_INFO.seed,
+      score, lives, level, combo, bricksBrokenRun,
+      runElapsedMs: Math.max(0, performance.now() - runStart),
+      upgradesOwned: Object.assign({}, upgradesOwned),
+      stats: Object.assign({}, stats), runUnlocks: runUnlocks.slice(),
+      levelStartBallsLost, chainBursts, chainKills, regenCount,
+      fireAnnounced, bossSpawned,
+      paddle: { x: paddle.x, w: paddle.w },
+      ballCount: balls.length,
+      powerups: powerups.map((p) => ({ x: p.x, y: p.y, type: p.type, vy: p.vy })),
+      timers: { wide: wideTimer, laser: laserTimer, slow: slowTimer,
+        fire: fireTimer, shield: shieldActive },
+      bricks: bricks.map((b) => ({
+        x: b.x, y: b.y, w: b.w, h: b.h, hp: b.hp, maxHp: b.maxHp,
+        alive: b.alive, elite: !!b.elite, kind: b.kind || null,
+        scoreVal: b.scoreVal || 0,
+        homeX: b.homeX, minX: b.minX, maxX: b.maxX, moveDir: b.moveDir,
+        respawnsLeft: b.respawnsLeft, respawnIn: b.respawnIn || 0,
+        boss: !!b.boss, name: b.name, score: b.score,
+      })),
+      wells: wells.map((w) => ({
+        x: w.x, y: w.y, pullR: w.pullR, horizon: w.horizon, bend: w.bend,
+        phase: w.phase, meals: w.meals, warned: !!w.warned,
+        danger: w.danger || 0, cool: w.cool || 0,
+      })),
+    };
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) { return false; }
+    updateContinueBtn();
+    return true;
+  }
+
+  function clearSave() {
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ }
+    updateContinueBtn();
+  }
+
+  function restoreSave() {
+    const s = readSave();
+    if (!s) { clearSave(); return false; }
+    blurActive(); // a clicked CONTINUE must not stay focused under Space
+    score = s.score; lives = s.lives; level = s.level;
+    combo = s.combo || 0; comboTimer = 0;
+    bricksBrokenRun = s.bricksBrokenRun || 0;
+    upgradesOwned = Object.assign({}, s.upgradesOwned || {});
+    resetStats();
+    if (s.stats) {
+      for (const k of Object.keys(stats)) {
+        if (typeof s.stats[k] === 'number' && Number.isFinite(s.stats[k])) stats[k] = s.stats[k];
+      }
+    }
+    runUnlocks = Array.isArray(s.runUnlocks) ? s.runUnlocks.slice() : [];
+    levelStartBallsLost = s.levelStartBallsLost || 0;
+    chainBursts = s.chainBursts || 0; chainKills = s.chainKills || 0;
+    regenCount = s.regenCount || 0;
+    fireAnnounced = !!s.fireAnnounced;
+    bossSpawned = !!s.bossSpawned;
+    bricks = s.bricks.map((b) => Object.assign({}, b));
+    boss = bricks.find((b) => b.boss && b.alive) || null;
+    if (!boss) bossSpawned = false;
+    wells = s.wells.map((w) => Object.assign({}, w));
+    paddle.x = s.paddle.x; paddle.w = s.paddle.w; paddle.targetX = null;
+    // Re-serve the balls glued to the paddle (see the section header:
+    // never restore a mid-flight ball). The saved count is kept, fanned
+    // like resetBall() does for TWIN LAUNCH.
+    const n = Math.max(1, Math.min(MAX_BALLS, s.ballCount || 1));
+    balls = [];
+    for (let i = 0; i < n; i++) {
+      const b = newBall(paddle.x + paddle.w / 2, PADDLE_Y - BALL_R - 1, 0, 0);
+      b.ox = (i - (n - 1) / 2) * 22;
+      balls.push(b);
+    }
+    powerups = (s.powerups || []).map((p) => ({ x: p.x, y: p.y, type: p.type, vy: p.vy || 60 }));
+    wideTimer = s.timers.wide || 0;
+    laserTimer = s.timers.laser || 0; laserCooldown = 0;
+    slowTimer = s.timers.slow || 0; fireTimer = s.timers.fire || 0;
+    shieldActive = !!s.timers.shield;
+    bolts = [];
+    particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = []; confetti = [];
+    runStart = performance.now() - (s.runElapsedMs || 0);
+    lastScoreRank = -1;
+    launchGrace = 0.5; // a beat of well immunity while the player re-orients
+    hideOverlays();
+    showIntro(level);
+    mode = 'serving';
+    updateHUD();
+    floatText(W / 2, H / 2 - 60, 'RUN RESTORED — LEVEL ' + level, '#b6ff00');
+    announce('Run restored. Level ' + level + ', score ' + score + ', ' + lives + ' lives.');
+    return true;
   }
 
   // ---------- Achievements + lifetime stats (Block 16) ----------
@@ -1541,6 +1701,8 @@
   // ---------- Flow ----------
   function startRun() {
     ensureAudio();
+    clearSave(); // #49: a fresh run abandons any saved run
+    saveTimer = 0;
     blurActive(); // #41: a clicked PLAY must not stay focused — Space would
     // re-click it and restart the run instead of launching the ball.
     score = 0; lives = 3; level = 1;
@@ -1580,6 +1742,7 @@
     if (mode !== 'playing' && mode !== 'serving') return;
     pausedFrom = mode;
     mode = 'paused';
+    saveRun(); // #49: pausing checkpoints the run
     // #37: the pause menu shows a snapshot of the run so far.
     pauseStats.textContent = 'Score ' + score + ' · Level ' + level + ' · Time ' + fmtTime(performance.now() - runStart) + ' · Best combo ×' + Math.max(1, stats.bestCombo);
     pauseOverlay.classList.remove('hidden');
@@ -1685,6 +1848,7 @@
     levelOverlay.classList.add('hidden');
     showIntro(level);
     mode = 'serving';
+    saveRun(); // #49: a fresh level is a clean restore point
     updateHUD();
   }
 
@@ -1772,6 +1936,7 @@
     const isNewBest = score > prevBest && score > 0;
     saveBest();
     saveScore();
+    clearSave(); // #49: the run is over — nothing left to continue
     bankRunTime(); // Block 16: bank the run's time + best combo
     checkAch('void-conquered', win);
     mode = 'gameover';
@@ -2163,6 +2328,12 @@
   const keys = new Set();
 
   function update(dt) {
+    // Block 18 (#49): autosave the run every 5s of live play, so a
+    // refresh or a crashed tab can pick up where the player left off.
+    if (mode === 'playing' || mode === 'serving') {
+      saveTimer += dt;
+      if (saveTimer >= 5) { saveTimer = 0; saveRun(); }
+    }
     // Particles + floating texts always animate (menus stay alive).
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i];
@@ -2746,9 +2917,13 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && (mode === 'playing' || mode === 'serving')) pauseGame();
   });
+  // Block 18 (#49): a refresh or tab-close saves the run first, so the
+  // menu can offer CONTINUE when the player comes back.
+  window.addEventListener('beforeunload', () => { saveRun(); });
 
   // ---------- Buttons ----------
   playBtn.addEventListener('click', startRun);
+  if (continueBtn) continueBtn.addEventListener('click', () => { ensureAudio(); restoreSave(); });
   resumeBtn.addEventListener('click', resumeGame);
   $('restartBtnPause').addEventListener('click', startRun);
   $('quitBtnPause').addEventListener('click', quitToMenu);
@@ -2788,7 +2963,10 @@
   updateMuteBtn();
   hideOverlays();
   menuOverlay.classList.remove('hidden');
-  focusEl(playBtn); // #41: keyboard players start on PLAY, no Tab hunt
+  // Block 18 (#49): a saved run puts CONTINUE on the menu and gives it
+  // keyboard focus — it is the most likely thing the player wants.
+  updateContinueBtn();
+  focusEl(hasSave() && continueBtn ? continueBtn : playBtn);
   // Block 16: achievements panel + settings controls start in sync with
   // the persisted state; a first visit opens the how-to over the menu.
   renderAchievements();
@@ -2820,6 +2998,17 @@
     get runUnlocks() { return runUnlocks.slice(); },
     get lifetime() { return Object.assign({}, lifetime); },
     get total() { return ACHIEVEMENTS.length; },
+  };
+
+  // Block 18 (#49): the save slot for the bot harness and the browser
+  // console — has() / save() / restore() / clear() / read() / refresh().
+  window.__nvbSave = {
+    has: hasSave,
+    save: saveRun,
+    restore: restoreSave,
+    clear: clearSave,
+    read: readSave,
+    refresh: updateContinueBtn,
   };
 
   // #12 / #19: run metadata for the bot harness and the browser console —

@@ -46,6 +46,8 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 - Auto-play bot harness (Block 11): `node tests/bot-harness.js` plays full runs headlessly in a stubbed DOM and reports coverage (levels cleared, powerups, wells, boss) plus bug detectors for ball tunneling, stuck balls and NaN velocities — run it before every push
 - Background music loop: synth arpeggio (Am–F–C–G) with bass and hats that intensify as your combo multiplier climbs (Block 5); while a Void Core lives, the music turns darker (Am–F–E–G) and holds at ×3 intensity for the boss fight (Block 17)
 - High score saved locally, auto-pause when the tab hides
+- Save / continue (Block 18): your run auto-saves every 5s, on pause, and when the tab closes — refresh or come back later and CONTINUE on the menu picks up the same level, score, lives, upgrades and brick layout, with the ball re-served on the paddle
+- Difficulty curve smoothed (Block 18): the ball-speed ramp now saturates over ~2 levels instead of inside level 1, and level 2's first void well bends more gently — a human-like bot probe showed the old curve ended runs on the first well level
 - Fully responsive — desktop and mobile, no build step
 
 ## Coming up (12-hour sprint roadmap)
