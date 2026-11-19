@@ -74,11 +74,60 @@
       '233333333332',
       '222222222222',
     ],
+    // Level 7 — VOID MAZE (backlog #19): corridors within corridors.
+    [
+      '333333333333',
+      '3..........3',
+      '3.22222222.3',
+      '3.2......2.3',
+      '3.2.3333.2.3',
+      '3.2.3..3.2.3',
+      '3.2.3333.2.3',
+      '3.2......2.3',
+      '3.22222222.3',
+      '3..........3',
+      '333333333333',
+    ],
+    // Level 8 — TWIN PEAKS (backlog #19): two spires, one way through.
+    [
+      '...33..33...',
+      '.3333..3333.',
+      '.3223..3223.',
+      '.3222..2223.',
+      '322223322223',
+      '333333333333',
+      '111111111111',
+    ],
+    // Level 9 — THE GAUNTLET (backlog #19): armored to the teeth.
+    [
+      'EEEEEEEEEEEE',
+      '333333333333',
+      '2..........2',
+      '211111111112',
+      '212222222212',
+      '212333333212',
+      '212222222212',
+      '211111111112',
+    ],
+    // Level 10 — EVENT HORIZON (backlog #19): the final wall. Clear it
+    // and the Void Core Prime wakes — 16 HP, 2500 points, the last gate.
+    [
+      '333333333333',
+      '3E33333333E3',
+      '32E333333E32',
+      '322333333223',
+      '322211112223',
+      '322233332223',
+      '322211112223',
+      '322333333223',
+      '333333333333',
+    ],
   ];
   // Level names + flavor lines shown on the intro card (backlog #25).
   const LEVEL_NAMES = [
     'FIRST CONTACT', 'NEBULA CROSS', 'VOID SPIRE',
     'STARFORGE', 'GRAVITY WELL', 'THE CORE',
+    'VOID MAZE', 'TWIN PEAKS', 'THE GAUNTLET', 'EVENT HORIZON',
   ];
   const LEVEL_FLAVOR = [
     'Warm up your paddle. The void is watching.',
@@ -86,7 +135,11 @@
     'The spire hums with void energy.',
     'Armored shell, soft heart. Crack it open.',
     'Rings within rings — the pull grows stronger.',
-    'The final wall. Break the Core, break the void.',
+    'Dense and unyielding. Punch through.',
+    'Every corridor leads deeper into the dark.',
+    'Two spires, one way through.',
+    'Armored to the teeth. Bring everything you have.',
+    'The final wall. Beyond it, only the Core.',
   ];
   const BRICK_COLORS = { 1: '#00f0ff', 2: '#ff2d95', 3: '#ffb300', 5: '#e040fb' };
   const BRICK_SCORE = { 1: 50, 2: 100, 3: 150, 5: 300 };
@@ -96,18 +149,20 @@
   const ELITE_DROP_CHANCE = 0.25;
 
   // ---------- Mini-boss: the Void Core (backlog #24) ----------
-  // At the end of level 5, once every normal brick is broken, the Void
-  // Core awakens — one big brick (240x40) with 12 HP and a 1500-point
+  // At the end of a boss level, once every normal brick is broken, the
+  // Void Core awakens — one big brick (240x40) with its own HP and a
   // bounty. The level only clears when the Core is destroyed, so the
   // boss is the final gate of the level, not a brick you can skip past.
   // It sits at the top of a cleared field, pulses violet, and carries
-  // its own HP bar above it (plus a top-of-screen boss bar).
-  const BOSS_LEVEL = 5;
-  const BOSS_HP = 12;
+  // its own HP bar above it (plus a top-of-screen boss bar). Level 5
+  // wakes the 12-HP Core; level 10, the final wall, wakes the 16-HP
+  // Void Core Prime — the last gate of the run.
+  const BOSS_LEVELS = {
+    5: { hp: 12, name: 'VOID CORE', score: 1500 },
+    10: { hp: 16, name: 'VOID CORE PRIME', score: 2500 },
+  };
   const BOSS_W = 240, BOSS_H = 40;
-  const BOSS_SCORE = 1500;
   const BOSS_COLOR = '#ff4d6d';
-  const BOSS_NAME = 'VOID CORE';
 
   // ---------- Void wells (backlog #14, #15, #17) ----------
   // The signature mechanic: black holes that bend the ball's trajectory
@@ -151,7 +206,84 @@
     [{ x: 200, y: 350 }, { x: 520, y: 350 }],
     [{ x: 360, y: 380, pullR: 150, horizon: 12, bend: 1.2 }],
     [{ x: 180, y: 340 }, { x: 540, y: 340 }],
+    // Levels 7-10 (backlog #19): the maze gets a flanking pair, the peaks
+    // get a pair high up, the gauntlet gets one big maw dead center, and
+    // the final wall gets a flanking pair again.
+    [{ x: 200, y: 360 }, { x: 520, y: 360 }],
+    [{ x: 180, y: 350 }, { x: 540, y: 350 }],
+    [{ x: 360, y: 380, pullR: 150, horizon: 12, bend: 1.2 }],
+    [{ x: 200, y: 340 }, { x: 520, y: 340 }],
   ];
+
+  // ---------- Seeded level variations (backlog #12) ----------
+  // The run's seed comes from the URL (?seed=XXXX, shareable) or, by
+  // default, from today's date — so everyone plays the same walls each
+  // day. The seed feeds a deterministic PRNG (mulberry32) that mutates
+  // the hand-designed maps: a mirror flip, a few HP swaps, and a sprinkle
+  // of elites on levels 2+. The mutations never add bricks outside the
+  // grid or strip the field, so every layout stays beatable — and the
+  // same seed always builds the same walls, so a shared seed is a shared
+  // run. The seed shows on the menu and is exposed as window.__nvbMeta.
+  function hashSeed(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function readSeed() {
+    let raw = '';
+    try {
+      const q = new URLSearchParams((window.location && window.location.search) || '');
+      raw = (q.get('seed') || '').trim();
+    } catch (e) { raw = ''; }
+    if (/^[A-Za-z0-9-]{1,12}$/.test(raw)) return { seed: raw.toUpperCase(), daily: false };
+    const d = new Date();
+    const daily = String(d.getFullYear())
+      + String(d.getMonth() + 1).padStart(2, '0')
+      + String(d.getDate()).padStart(2, '0');
+    return { seed: daily, daily: true };
+  }
+  const SEED_INFO = readSeed();
+
+  // One seeded mutation pass over a level's map. The RNG is seeded from
+  // the run seed XOR the level number, so each level varies independently
+  // and the same seed + level always gives the same wall.
+  function seededLevelMap(n) {
+    const base = LEVELS[n - 1];
+    const rng = mulberry32(hashSeed(SEED_INFO.seed) ^ Math.imul(n, 0x9E3779B9));
+    let rows = base.slice();
+    if (rng() < 0.5) rows = rows.map((r) => r.split('').reverse().join(''));
+    const grid = rows.map((r) => r.split(''));
+    const R = grid.length, C = grid[0].length;
+    // A few HP swaps: 1->2, 2->3, sometimes 3->2. Elites are never
+    // downgraded and the field never gains or loses bricks here.
+    const swaps = 2 + Math.floor(rng() * 4);
+    for (let i = 0; i < swaps; i++) {
+      const r = Math.floor(rng() * R), c = Math.floor(rng() * C);
+      const ch = grid[r][c];
+      if (ch === '1') grid[r][c] = '2';
+      else if (ch === '2') grid[r][c] = '3';
+      else if (ch === '3' && rng() < 0.5) grid[r][c] = '2';
+    }
+    // Elite sprinkle on levels 2+: 0-2 plain bricks become armored.
+    // Level 1 stays gentle — the void hasn't woken up yet.
+    if (n >= 2) {
+      const elites = Math.floor(rng() * 3);
+      for (let i = 0; i < elites; i++) {
+        const r = Math.floor(rng() * R), c = Math.floor(rng() * C);
+        const ch = grid[r][c];
+        if (ch === '1' || ch === '2' || ch === '3') grid[r][c] = 'E';
+      }
+    }
+    return grid.map((r) => r.join(''));
+  }
 
   // ---------- DOM ----------
   const canvas = document.getElementById('game');
@@ -170,6 +302,7 @@
   const muteBtn = $('muteBtn'), pauseBtn = $('pauseBtn');
   const pauseStats = $('pauseStats');
   const menuScoresEl = $('menuScores'), gameOverScoresEl = $('gameOverScores');
+  const seedLineEl = $('seedLine'); // #12: menu line showing the run seed
   const playBtn = $('playBtn'), resumeBtn = $('resumeBtn');
   const againBtn = $('againBtn');
   const srStatus = $('srStatus'); // #51: polite live region for announcements
@@ -269,7 +402,7 @@
   const REDUCED_MOTION = typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // Powerup defs (backlog #1, #2, #3, #4, #5, #6, #7): glyph drawn on the capsule.
+  // Powerup defs (backlog #1, #2, #3, #4, #5, #6, #7, #16): glyph drawn on the capsule.
   const POWERUP_TYPES = {
     multi: { label: 'MULTI-BALL', color: '#b6ff00', glyph: 'M' },
     wide: { label: 'WIDE PADDLE', color: '#00f0ff', glyph: 'W' },
@@ -277,6 +410,7 @@
     slow: { label: 'SLOW-MO', color: '#8b5cff', glyph: 'S' },
     shield: { label: 'SHIELD', color: SHIELD_COLOR, glyph: '◈' },
     fire: { label: 'FIREBALL', color: '#ff7b00', glyph: 'F' },
+    bomb: { label: 'VOID BOMB', color: '#e040fb', glyph: '✹' },
   };
   const POWERUP_DROP_CHANCE = 0.12; // per brick destroyed
   const MAX_BALLS = 5;
@@ -723,7 +857,7 @@
   }
 
   function buildLevel(n) {
-    const map = LEVELS[n - 1];
+    const map = seededLevelMap(n); // #12: the seed mutates the hand-made map
     const rows = map.length;
     const cols = map[0].length;
     const margin = 36, gap = 6, top = 78, bh = 22;
@@ -741,20 +875,22 @@
       }
     }
     buildWells(n);
-    boss = null; bossSpawned = false; // #24: the Core only wakes on level 5
+    boss = null; bossSpawned = false; // #24: the Core only wakes on boss levels (5, 10)
   }
 
-  // #24: the Void Core awakens — one big 12-HP brick at the top of the
+  // #24: the Void Core awakens — one big brick at the top of the
   // cleared field, with fanfare. It joins `bricks`, so the normal hit,
   // reflect and clear logic all apply to it (with boss special-casing).
   function spawnBoss() {
+    const cfg = BOSS_LEVELS[level];
     bossSpawned = true;
     boss = {
       x: (W - BOSS_W) / 2, y: 78, w: BOSS_W, h: BOSS_H,
-      hp: BOSS_HP, maxHp: BOSS_HP, alive: true, boss: true,
+      hp: cfg.hp, maxHp: cfg.hp, alive: true, boss: true,
+      name: cfg.name, score: cfg.score,
     };
     bricks.push(boss);
-    floatText(W / 2, 200, BOSS_NAME + ' AWAKENS!', BOSS_COLOR);
+    floatText(W / 2, 200, cfg.name + ' AWAKENS!', BOSS_COLOR);
     floatText(W / 2, 224, 'BREAK THE CORE TO CLEAR THE LEVEL', '#f2ecff');
     announce('Warning. The Void Core has awakened. Break it to clear the level.');
     ringBurst(W / 2, 98, BOSS_COLOR, 260);
@@ -800,9 +936,9 @@
   function maybeDropPowerup(x, y, chance) {
     if (powerups.length >= 3) return;
     if (Math.random() >= (chance || POWERUP_DROP_CHANCE)) return;
-    // #3/#4/#5/#6: six capsule types, weighted — multi and wide most common.
+    // #3/#4/#5/#6/#16: seven capsule types, weighted — multi and wide most common.
     const r = Math.random();
-    const type = r < 0.22 ? 'multi' : r < 0.40 ? 'wide' : r < 0.58 ? 'laser' : r < 0.71 ? 'slow' : r < 0.85 ? 'shield' : 'fire';
+    const type = r < 0.20 ? 'multi' : r < 0.36 ? 'wide' : r < 0.52 ? 'laser' : r < 0.64 ? 'slow' : r < 0.76 ? 'shield' : r < 0.88 ? 'fire' : 'bomb';
     powerups.push({ x, y, type, vy: 150 });
   }
 
@@ -855,11 +991,49 @@
       // while it is already hot only refreshes the timer.
       fireTimer = FIRE_DURATION;
       floatText(paddle.x + paddle.w / 2, PADDLE_Y - 24, 'FIREBALL!', def.color);
+    } else if (type === 'bomb') {
+      // #16: the void bomb detonates at the ball nearest the bricks and
+      // shatters everything in a 160px radius (2 HP each — elites and the
+      // Core take the hit but survive). It is instant, so it gets no HUD
+      // chip; the blast itself is the feedback (see detonateBomb).
+      detonateBomb();
     }
     burst(paddle.x + paddle.w / 2, PADDLE_Y, def.color, 16, 240);
     sfx.powerup();
     announce(def.label + ' activated.');
     updateHUD();
+  }
+
+  // #16: void bomb detonation. The blast centers on the ball closest to
+  // the brick field (lowest y) — the capsule is caught at the paddle,
+  // but the ball is the thing up in the wall, so the blast lands where
+  // the bricks are. Everything alive in a 160px radius takes 2 HP of
+  // damage via the normal damageBrick path (so combos, drops, the boss
+  // wake and the level-clear check all behave exactly as if the ball
+  // had done it). The snapshot is taken up front: damageBrick can end
+  // the level or wake the boss mid-blast, and the loop stops as soon as
+  // the mode leaves play.
+  const BOMB_RADIUS = 160, BOMB_DAMAGE = 2;
+  function detonateBomb() {
+    let target = null;
+    for (const b of balls) if (!target || b.y < target.y) target = b;
+    const cx = target ? target.x : W / 2;
+    const cy = target ? target.y : 240;
+    const hits = bricks.filter((br) => br.alive
+      && Math.hypot(br.x + br.w / 2 - cx, br.y + br.h / 2 - cy) <= BOMB_RADIUS);
+    floatText(W / 2, 200, 'VOID BOMB!', POWERUP_TYPES.bomb.color);
+    if (hits.length) {
+      floatText(W / 2, 224, hits.length + (hits.length === 1 ? ' BRICK' : ' BRICKS') + ' SHATTERED', '#f2ecff');
+    }
+    ringBurst(cx, cy, POWERUP_TYPES.bomb.color, 300);
+    burst(cx, cy, POWERUP_TYPES.bomb.color, 40, 480);
+    burst(cx, cy, '#ffffff', 20, 320);
+    shake = Math.min(SHAKE_MAX, shake + 8);
+    sfx.explosion();
+    for (const br of hits) {
+      if (mode !== 'playing') break;
+      for (let d = 0; d < BOMB_DAMAGE && br.alive && mode === 'playing'; d++) damageBrick(br);
+    }
   }
 
   function updatePowerups(dt) {
@@ -1330,9 +1504,9 @@
       stats.bricksBroken++; // #11
       // #20: elite bricks drop powerups twice as often.
       maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2, b.elite ? ELITE_DROP_CHANCE : undefined);
-      // #24: the Core is worth 1500; everything else uses its table score.
+      // #24: the Core is worth its bounty; everything else uses its table score.
       const pts = b.boss
-        ? Math.round(BOSS_SCORE * mult() * scoreMult())
+        ? Math.round(b.score * mult() * scoreMult())
         : Math.round(BRICK_SCORE[b.maxHp] * mult() * scoreMult()); // #10 score stacks
       score += pts;
       floatText(b.x + b.w / 2, b.y, '+' + pts + (mult() > 1 ? ' ×' + mult() : ''), color);
@@ -1347,16 +1521,16 @@
         sfx.explosion();
         ringBurst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 300);
         burst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 40, 480);
-        floatText(W / 2, 200, 'VOID CORE DESTROYED!', BOSS_COLOR);
+        floatText(W / 2, 200, (b.name || 'VOID CORE') + ' DESTROYED!', BOSS_COLOR);
         boss = null;
       } else {
         sfx.brick(combo);
       }
       updateHUD();
       if (bricks.every((bb) => !bb.alive)) {
-        // #24: on level 5 the Core wakes instead of clearing — the
+        // #24: on a boss level the Core wakes instead of clearing — the
         // level only ends once the boss itself is destroyed.
-        if (level === BOSS_LEVEL && !bossSpawned) { spawnBoss(); return 'boss'; }
+        if (BOSS_LEVELS[level] && !bossSpawned) { spawnBoss(); return 'boss'; }
         onLevelClear(); return 'clear';
       }
       return 'ok';
@@ -1830,7 +2004,7 @@
         ctx.fillStyle = '#ffd7de';
         ctx.font = '800 10px "Segoe UI", system-ui, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(BOSS_NAME + '  ' + b.hp + '/' + b.maxHp, b.x + bw / 2, b.y + b.h + 28);
+        ctx.fillText((b.name || 'VOID CORE') + '  ' + b.hp + '/' + b.maxHp, b.x + bw / 2, b.y + b.h + 28);
       } else if (b.hp > 1) {
         ctx.fillStyle = 'rgba(7,3,18,0.75)';
         for (let p = 0; p < b.hp; p++) {
@@ -2113,6 +2287,12 @@
   resetBall();
   updateHUD();
   renderScores(-1);
+  // #12: the seed line tells the player which layout set this run uses
+  // and how to share it — a copied ?seed= link rebuilds the same walls.
+  if (seedLineEl) {
+    seedLineEl.textContent = (SEED_INFO.daily ? 'DAILY SEED ' : 'SEED ') + SEED_INFO.seed
+      + ' · share this layout: ?seed=' + SEED_INFO.seed;
+  }
   updateMuteBtn();
   hideOverlays();
   menuOverlay.classList.remove('hidden');
@@ -2124,6 +2304,20 @@
     get fps() { return fpsEma; },
     get lowPerf() { return lowPerf; },
     get reducedMotion() { return REDUCED_MOTION; },
+  };
+
+  // #12 / #19: run metadata for the bot harness and the browser console —
+  // the seed (daily or from ?seed=), how many levels the run has, and a
+  // signature of the current level's live brick layout (position + HP),
+  // so a test can prove the same seed builds the same wall.
+  window.__nvbMeta = {
+    get seed() { return SEED_INFO.seed; },
+    get dailySeed() { return SEED_INFO.daily; },
+    get levels() { return LEVELS.length; },
+    get levelSig() {
+      return bricks.filter((b) => b.alive)
+        .map((b) => Math.round(b.x) + ':' + Math.round(b.y) + ':' + b.hp).join(',');
+    },
   };
 
   let last = performance.now();
