@@ -305,6 +305,15 @@ canvas {
   line-height: 1.6;
 }
 
+/* #12: the seed line under the menu how-to — small, quiet, copyable. */
+.seed-line {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .btn {
   font: inherit;
   font-weight: 800;

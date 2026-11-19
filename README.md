@@ -27,9 +27,11 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 ## Features
 
-- 6 hand-designed levels with multi-hit bricks
+- 10 hand-designed levels with multi-hit bricks (Block 15)
 - Void gravity wells (Block 9): from level 2, black holes bend the ball's path inside their telegraphed pull ring and swallow any ball that crosses the event horizon — then go sated for 5s. Each well wakes for 2.5s of every 8s cycle and stirs visibly for 1s first (the ring brightens), so you can time your shots around it; watch the rim flare pink as a ball nears the maw. A well eats at most one ball per level — once fed it only bends the ball, harmlessly. Serves are shielded from the wells for 1.2s, and the paddle respawns at center after a swallow. Level 5 hides one big maw dead center
-- Powerups: multi-ball, wide paddle, laser paddle (Space to shoot, 12s), slow-mo (0.6× ball speed, 10s), shield (bottom net saves one lost ball), and fireball (piercing ball, 10s) drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers as coloured chips with countdown bars (Block 11, Block 12)
+- Powerups: multi-ball, wide paddle, laser paddle (Space to shoot, 12s), slow-mo (0.6× ball speed, 10s), shield (bottom net saves one lost ball), fireball (piercing ball, 10s), and void bomb (160px blast that shatters nearby bricks, 2 HP each) drop from broken bricks (12% chance) — catch the capsule to activate; HUD shows active timers as coloured chips with countdown bars (Block 11, Block 12, Block 15)
+- Seeded level variations (Block 15): layouts vary by seed — everyone plays the same walls each day, and `?seed=XXXX` in the URL shares one; the seed shows on the menu
+- Two Void Core mini-bosses (Block 10, Block 15): clearing level 5 wakes the 12-HP Void Core, clearing level 10 wakes the 16-HP Void Core Prime — each must be destroyed to advance
 - Roguelite upgrade draft: after every level clear, pick 1 of 3 upgrades (extra life, wider paddle, ball control, score boost, magnet paddle, twin launch) — they stack and last the whole run (Block 6)
 - Run stats: best combo, bricks broken, shot accuracy, and powerups caught/missed shown on the game-over screen (Block 6)
 - Pause menu with run snapshot, restart, and quit-to-menu (Esc / P / Space to pause &amp; resume) (Block 7)
@@ -47,9 +49,8 @@ Bounce the ball with your paddle to smash every brick. Chain brick breaks withou
 
 ## Coming up (12-hour sprint roadmap)
 
-Levels 7–10, achievements, more powerups (including the void bomb),
-accessibility and cross-browser passes, PWA-lite polish, and a v1.0
-release. Follow the build in [docs/devlog.md](docs/devlog.md).
+Achievements, more powerups, accessibility and cross-browser passes,
+PWA-lite polish, and a v1.0 release. Follow the build in [docs/devlog.md](docs/devlog.md).
 
 ## Tech
 
