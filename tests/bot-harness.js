@@ -131,7 +131,14 @@ const IDS = ['score', 'best', 'level', 'lives', 'combo', 'power', 'menuOverlay',
   'draftCards', 'introLevel', 'introName', 'introFlavor', 'levelTitle', 'levelStats',
   'gameOverTitle', 'gameOverStats', 'nextLevelBtn', 'muteBtn', 'pauseBtn', 'pauseStats',
   'menuScores', 'gameOverScores', 'playBtn', 'resumeBtn', 'restartBtnPause',
-  'quitBtnPause', 'againBtn', 'menuBtnOver', 'srStatus', 'seedLine'];
+  'quitBtnPause', 'againBtn', 'menuBtnOver', 'srStatus', 'seedLine',
+  // Block 16 (#39 how-to, #35/#36/#44 settings, achievements): every id the
+  // game reads must exist in the stub or the load throws on addEventListener.
+  'howtoOverlay', 'settingsOverlay', 'achOverlay', 'achToast',
+  'achBtn', 'howtoBtn', 'settingsBtn', 'volumeSlider', 'volumeVal',
+  'musicToggle', 'sfxToggle', 'shakeToggle', 'motionToggle',
+  'achList', 'achCount', 'lifetimeStats',
+  'closeHowtoBtn', 'closeSettingsBtn', 'closeAchBtn', 'playFromHowtoBtn'];
 for (const id of IDS) {
   const tag = /Btn$/.test(id) ? 'BUTTON' : (id.endsWith('Overlay') || id === 'draftCards' ? 'DIV' : 'SPAN');
   makeEl(tag, id);
@@ -199,6 +206,8 @@ const obs = {
   // Block 15 observations (#12 seeds, #16 void bomb)
   bombSeen: false, bombBroke: false, bombMaxDelta: 0, bombCount: 0,
   bootSig: '', brickSigs: [],
+  // Block 16 observations (achievements + settings)
+  achToastSeen: false, maxShakeSeen: 0, lastGameOverHtml: '',
 };
 let prevBall = null, prevLives = 3, prevScore = 0, prevAngle = null, prevInZone = false;
 let fireCheckFrame = -1, fireAngleBefore = 0; // Block 12: pierce check state
@@ -227,7 +236,9 @@ function wellCores() {
 }
 function overlayVisible(id) { return !elementsById[id].classList.contains('hidden'); }
 function anyOverlay() {
-  return ['pauseOverlay', 'levelOverlay', 'gameOverOverlay', 'draftOverlay', 'menuOverlay']
+  return ['pauseOverlay', 'levelOverlay', 'gameOverOverlay', 'draftOverlay', 'menuOverlay',
+    // Block 16: the new modals also block play while open.
+    'howtoOverlay', 'settingsOverlay', 'achOverlay']
     .some((id) => overlayVisible(id));
 }
 function powerHTML() { const el = elementsById.power; return (el.innerHTML || el.textContent || ''); }
@@ -241,6 +252,13 @@ function observe() {
   // Block 14 (#51): latch any screen-reader announcement the game made.
   const sr = elementsById.srStatus && elementsById.srStatus.textContent;
   if (sr) obs.srAnnounced = true;
+  // Block 16: latch the achievement toast + the biggest effective shake
+  // seen (the shake toggle check needs a max, not a snapshot — and the
+  // toast text persists after the toast hides, so this latches once).
+  const toast = elementsById.achToast && elementsById.achToast.textContent;
+  if (toast) obs.achToastSeen = true;
+  const perf = global.window.__nvbPerf;
+  if (perf && typeof perf.shake === 'number' && perf.shake > obs.maxShakeSeen) obs.maxShakeSeen = perf.shake;
   if (lv > obs.maxLevel) obs.maxLevel = lv;
   const scoreJump = sc > prevScore;
   if (sc < prevScore) obs.nanEvents.push('score decreased ' + prevScore + ' -> ' + sc);
@@ -577,7 +595,64 @@ obs.bootSig = global.window.__nvbMeta ? global.window.__nvbMeta.levelSig : 'n/a'
 
 console.log('== boot ==');
 check('boot: menu overlay visible', overlayVisible('menuOverlay'));
-check('boot: PLAY button focused', document.activeElement === elementsById.playBtn);
+// Block 16 (#39): a first visit opens the how-to overlay over the menu,
+// so focus lands on its GOT IT — PLAY button instead of PLAY.
+check('boot: PLAY (or how-to PLAY) button focused',
+  document.activeElement === elementsById.playBtn
+  || document.activeElement === elementsById.playFromHowtoBtn);
+
+console.log('== Block 16 interactive (#39 how-to, #35/#36/#44 settings) ==');
+// #39: first visit auto-shows the how-to overlay over the menu.
+check('howto: auto-shows on first visit', overlayVisible('howtoOverlay'));
+// #39: CLOSE dismisses it and marks it seen, so it never auto-shows again.
+elementsById.closeHowtoBtn.click(); pump(2);
+check('howto: CLOSE hides it + marks seen',
+  !overlayVisible('howtoOverlay')
+  && global.localStorage.getItem('nvb-seen-howto') === '1');
+// #39: reopening from the menu and pressing GOT IT — PLAY starts a run.
+elementsById.howtoBtn.click(); pump(2);
+check('howto: menu button reopens it', overlayVisible('howtoOverlay'));
+elementsById.playFromHowtoBtn.click(); pump(3);
+check('howto: GOT IT — PLAY starts a run',
+  !overlayVisible('howtoOverlay') && !overlayVisible('menuOverlay'));
+// Back to the menu so the playtest starts clean: pause, then quit.
+key('KeyP'); pump(2);
+check('howto: run pauses after the how-to start', overlayVisible('pauseOverlay'));
+key('KeyQ'); pump(2);
+check('howto: Q quits back to the menu', overlayVisible('menuOverlay'));
+// #44/#35/#36: settings open, volume persists, toggles stick.
+elementsById.settingsBtn.click(); pump(2);
+check('settings: gear opens the panel', overlayVisible('settingsOverlay'));
+elementsById.volumeSlider.value = '50';
+elementsById.volumeSlider.dispatch('input'); pump(1);
+check('settings: volume slider persists 0.5',
+  global.window.__nvbPerf.settings.volume === 0.5
+  && JSON.parse(global.localStorage.getItem('nvb-settings') || '{}').volume === 0.5,
+  'volume=' + global.window.__nvbPerf.settings.volume);
+elementsById.musicToggle.checked = false;
+elementsById.musicToggle.dispatch('change'); pump(1);
+check('settings: music toggle off persists',
+  global.window.__nvbPerf.settings.music === false);
+elementsById.musicToggle.checked = true;
+elementsById.musicToggle.dispatch('change'); pump(1);
+// #44: shake off before the playtest — the post-playtest check proves no
+// shake value ever rendered while it was off (maxShakeSeen stays 0).
+elementsById.shakeToggle.checked = false;
+elementsById.shakeToggle.dispatch('change'); pump(1);
+check('settings: shake toggle off persists',
+  global.window.__nvbPerf.settings.shake === false);
+// #44: reduce-motion toggle on flips the perf flag; off again so the
+// confetti check below still sees its burst.
+elementsById.motionToggle.checked = true;
+elementsById.motionToggle.dispatch('change'); pump(1);
+check('settings: reduce-motion toggle flips the flag',
+  global.window.__nvbPerf.reducedMotion === true);
+elementsById.motionToggle.checked = false;
+elementsById.motionToggle.dispatch('change'); pump(1);
+check('settings: reduce-motion toggle restores the flag',
+  global.window.__nvbPerf.reducedMotion === false);
+elementsById.closeSettingsBtn.click(); pump(2);
+check('settings: DONE closes the panel', !overlayVisible('settingsOverlay'));
 
 console.log('== tunnel audit, source level (#47, #48) ==');
 // The audit's static leg: the substep must be <= 1/3 of the thinnest
@@ -589,7 +664,7 @@ check('audit: NaN velocity guard present', SRC.includes('Number.isFinite(ball.vx
 
 console.log('== HTML ==');
 const html = fs.readFileSync(HTML, 'utf8');
-check('HTML: version v0.15.0', html.includes('v0.15.0'));
+check('HTML: version v0.16.0', html.includes('v0.16.0'));
 
 console.log('== bot playtest (#45) ==');
 let attemptResults = [];
@@ -639,6 +714,12 @@ for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
   }
   attemptResults.push({ attempt, result, levelsCleared: obs.levelsCleared.length - clearedBefore,
     score: score(), maxLevel: obs.maxLevel });
+  // Block 16: keep the FIRST game-over screen's HTML — later attempts may
+  // unlock nothing new (everything already unlocked), so their screen has
+  // no "Unlocked:" line to check.
+  if (overlayVisible('gameOverOverlay') && !obs.lastGameOverHtml) {
+    obs.lastGameOverHtml = elementsById.gameOverStats.innerHTML || '';
+  }
   console.log('  attempt ' + attempt + ': ' + result + ' levelsCleared='
     + (obs.levelsCleared.length - clearedBefore) + ' score=' + score()
     + ' maxLevel=' + obs.maxLevel);
@@ -768,6 +849,75 @@ check('bomb: capsule type in the drop pool', SRC.includes("bomb: { label: 'VOID 
 check('bomb: detonateBomb damages in a radius via damageBrick',
   SRC.includes('function detonateBomb') && SRC.includes('BOMB_RADIUS') && SRC.includes('damageBrick(br)'));
 
+console.log('== Block 16 (achievements + stats, #35/#36/#39/#44) ==');
+const ach = global.window.__nvbAch;
+check('achievements: __nvbAch exposed (14 total)', !!ach && ach.total === 14, 'total=' + (ach && ach.total));
+check('achievements: first-blood unlocked', !!ach && ach.unlocked.indexOf('first-blood') >= 0);
+check('achievements: first-contact (level 1 clear) unlocked', !!ach && ach.unlocked.indexOf('first-contact') >= 0);
+check('achievements: combo ×3 unlocked', !!ach && ach.unlocked.indexOf('combo-3') >= 0, 'maxCombo=×' + obs.maxCombo);
+check('achievements: combo ×5 unlocked', !!ach && ach.unlocked.indexOf('combo-5') >= 0, 'maxCombo=×' + obs.maxCombo);
+check('achievements: five-ball frenzy unlocked', !!ach && ach.unlocked.indexOf('five-ball') >= 0);
+check('achievements: powerup hoarder (10 in a run) unlocked', !!ach && ach.unlocked.indexOf('hoarder') >= 0, 'caught=' + obs.powerupsCaught);
+check('achievements: shield savior unlocked', !!ach && ach.unlocked.indexOf('shield-savior') >= 0, 'saved=' + obs.shieldSaved);
+check('achievements: core breaker unlocked', !!ach && ach.unlocked.indexOf('core-breaker') >= 0, 'bossDestroyed=' + obs.bossDestroyed);
+check('achievements: void conquered (all 10 levels) unlocked', !!ach && ach.unlocked.indexOf('void-conquered') >= 0);
+check('achievements: high roller (50k in a run) unlocked', !!ach && ach.unlocked.indexOf('high-roller') >= 0, 'finalScore=' + obs.finalScore);
+check('achievements: brick barrage (100 in a run) unlocked', !!ach && ach.unlocked.indexOf('brick-barrage') >= 0);
+check('achievements: thousand cut (1,000 lifetime) unlocked', !!ach && ach.unlocked.indexOf('thousand-cut') >= 0, 'lifetimeBricks=' + (ach && ach.lifetime.bricks));
+check('achievements: gravity\'s end (level 5 clear) unlocked', !!ach && ach.unlocked.indexOf('gravitys-end') >= 0);
+check('achievements: flawless level unlocked', !!ach && ach.unlocked.indexOf('flawless') >= 0);
+check('achievements: unlock toast shown', obs.achToastSeen === true);
+check('achievements: game-over screen lists this run\'s unlocks',
+  (obs.lastGameOverHtml || '').indexOf('Unlocked') >= 0,
+  'html=' + JSON.stringify((obs.lastGameOverHtml || '').slice(0, 120)));
+// Panel: get back to the menu (whatever state the perf probe left), open
+// it, count rows, close it again.
+if (overlayVisible('draftOverlay')) { key('Digit2'); pump(3); }
+if (overlayVisible('levelOverlay')) { advanceLevel(); pump(3); }
+if (overlayVisible('pauseOverlay')) { key('KeyQ'); pump(3); }
+else if (overlayVisible('gameOverOverlay')) { key('KeyQ'); pump(3); }
+else if (!overlayVisible('menuOverlay')) { key('KeyP'); pump(2); if (overlayVisible('pauseOverlay')) { key('KeyQ'); pump(3); } }
+if (overlayVisible('menuOverlay')) {
+  elementsById.achBtn.click(); pump(2);
+  check('achievements: panel opens from the menu', overlayVisible('achOverlay'));
+  const rows = elementsById.achList.children || [];
+  check('achievements: panel lists all 14', rows.length === 14, 'rows=' + rows.length);
+  const unlockedRows = rows.filter((r) => r.classList.contains('unlocked')).length;
+  check('achievements: panel marks unlocked rows',
+    unlockedRows === (ach ? ach.unlocked.length : -1),
+    'unlockedRows=' + unlockedRows + ' unlocked=' + (ach && ach.unlocked.length));
+  check('achievements: panel shows the unlock count',
+    (elementsById.achCount.textContent || '').indexOf(String(ach ? ach.unlocked.length : -1)) >= 0,
+    'count=' + JSON.stringify(elementsById.achCount.textContent));
+  check('achievements: lifetime stats line rendered',
+    (elementsById.lifetimeStats.textContent || '').indexOf('Runs') >= 0,
+    'stats=' + JSON.stringify((elementsById.lifetimeStats.textContent || '').slice(0, 80)));
+  elementsById.closeAchBtn.click(); pump(2);
+  check('achievements: CLOSE hides the panel', !overlayVisible('achOverlay'));
+} else {
+  check('achievements: panel opens from the menu', false, 'not on menu at check time');
+  check('achievements: panel lists all 14', false, 'not on menu at check time');
+  check('achievements: panel marks unlocked rows', false, 'not on menu at check time');
+  check('achievements: panel shows the unlock count', false, 'not on menu at check time');
+  check('achievements: lifetime stats line rendered', false, 'not on menu at check time');
+  check('achievements: CLOSE hides the panel', false, 'not on menu at check time');
+}
+// Lifetime stats persisted across the run.
+const life = JSON.parse(global.localStorage.getItem('nvb-lifetime') || '{}');
+check('stats: lifetime runs recorded', (life.runs || 0) >= 1, 'runs=' + life.runs);
+check('stats: lifetime bricks recorded', (life.bricks || 0) > 100, 'bricks=' + life.bricks);
+check('stats: lifetime best combo recorded', (life.bestCombo || 0) >= 3, 'bestCombo=' + life.bestCombo);
+check('stats: achievements persisted in localStorage',
+  (JSON.parse(global.localStorage.getItem('nvb-achievements') || '[]').length || 0) >= 10,
+  'unlocked=' + JSON.parse(global.localStorage.getItem('nvb-achievements') || '[]').length);
+// #44: shake stayed off for the whole playtest (toggled off pre-playtest).
+check('settings: shake off means zero shake all run (max ' + obs.maxShakeSeen.toFixed(2) + ')',
+  obs.maxShakeSeen === 0, 'maxShake=' + obs.maxShakeSeen.toFixed(2));
+check('settings: volume/music/shake persisted after the run',
+  global.window.__nvbPerf.settings.volume === 0.5
+  && global.window.__nvbPerf.settings.music === true
+  && global.window.__nvbPerf.settings.shake === false);
+
 console.log('\n== coverage report ==');
 console.log('attempts: ' + JSON.stringify(attemptResults));
 console.log('levels cleared: ' + JSON.stringify(obs.levelsCleared) + ' (max level reached ' + obs.maxLevel + ')');
@@ -790,6 +940,10 @@ console.log('block 15: seed=' + (global.window.__nvbMeta && global.window.__nvbM
   + ' levels=' + (global.window.__nvbMeta && global.window.__nvbMeta.levels)
   + ' · bomb seen=' + obs.bombSeen + ' detonations=' + obs.bombCount
   + ' maxDelta=' + obs.bombMaxDelta + ' broke=' + obs.bombBroke);
+console.log('block 16: achievements unlocked=' + (global.window.__nvbAch && global.window.__nvbAch.unlocked.length)
+  + '/' + (global.window.__nvbAch && global.window.__nvbAch.total)
+  + ' · toastSeen=' + obs.achToastSeen + ' · maxShake=' + obs.maxShakeSeen.toFixed(2)
+  + ' · lifetime=' + JSON.stringify(global.window.__nvbAch && global.window.__nvbAch.lifetime));
 console.log('brick signatures: boot=' + JSON.stringify(obs.bootSig)
   + ' attempts=' + JSON.stringify(obs.brickSigs));
 console.log('paddle crossings: ' + obs.crossings + ' · bounces: ' + obs.bounces

@@ -17,6 +17,7 @@
     <div class="top-actions">
       <button id="muteBtn" class="btn btn-ghost" type="button" aria-label="Toggle sound">SOUND: ON</button>
       <button id="pauseBtn" class="btn btn-ghost" type="button" aria-label="Pause game">PAUSE</button>
+      <button id="settingsBtn" class="btn btn-ghost" type="button" aria-label="Open settings">⚙ SETTINGS</button>
     </div>
   </header>
 
@@ -36,10 +37,15 @@
          balls, powerups and game over here for screen-reader players. -->
     <div id="srStatus" class="sr-only" role="status" aria-live="polite"></div>
 
+    <!-- Block 16: achievement unlock toast. -->
+    <div id="achToast" class="ach-toast hidden" role="status"></div>
+
     <div id="menuOverlay" class="overlay" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
       <h1 id="menuTitle">NEON VOID<br>BREAKER</h1>
       <p class="tagline">Break bricks. Build combos.<br>Don't fall into the void.</p>
       <button id="playBtn" class="btn btn-primary" type="button">▶ &nbsp;PLAY</button>
+      <button id="achBtn" class="btn btn-ghost" type="button">🏆 ACHIEVEMENTS (0/14)</button>
+      <button id="howtoBtn" class="btn btn-ghost" type="button">HOW TO PLAY</button>
       <p class="howto">Move with mouse, touch drag, or ← → keys.<br>Space to launch · fires the laser while LASER is active · P pause · R resume · Q quit · M mute.</p>
       <p id="seedLine" class="seed-line"></p>
       <div id="menuScores" class="scores"></div>
@@ -75,6 +81,44 @@
       <button id="menuBtnOver" class="btn btn-ghost" type="button">MENU</button>
     </div>
 
+    <div id="howtoOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="howtoTitle">
+      <h2 id="howtoTitle">HOW TO PLAY</h2>
+      <div class="howto-body">
+        <h3>GOAL</h3>
+        <p>Bounce the ball with your paddle and smash every brick. Clear the board to advance — and restore +1 life. Lose the ball and you lose a life; lose them all and the run ends.</p>
+        <h3>CONTROLS</h3>
+        <p>Mouse / touch drag / ← → move the paddle. Space launches the ball, fires the laser while LASER is active, and pauses otherwise. P pause · R resume · Q quit · M mute · 1 / 2 / 3 pick a draft upgrade.</p>
+        <h3>COMBOS &amp; POWERUPS</h3>
+        <p>Chain brick hits without missing to raise your combo multiplier — at ×3 the ball catches fire. Broken bricks drop capsules: MULTI-BALL, WIDE paddle, LASER, SLOW-MO, SHIELD net, FIREBALL and VOID BOMB.</p>
+        <h3>THE VOID</h3>
+        <p>From level 2, void wells bend your ball's path — the black core swallows any ball that drifts too close, once per level. Violet elite bricks take 5 hits. On levels 5 and 10, clearing the board wakes the Void Core — break it to advance.</p>
+      </div>
+      <button id="playFromHowtoBtn" class="btn btn-primary" type="button">▶ &nbsp;GOT IT — PLAY</button>
+      <button id="closeHowtoBtn" class="btn btn-ghost" type="button">CLOSE</button>
+    </div>
+
+    <div id="settingsOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <h2 id="settingsTitle">SETTINGS</h2>
+      <div class="settings-body">
+        <label class="set-row" for="volumeSlider">VOLUME <span class="set-control"><input id="volumeSlider" type="range" min="0" max="100" step="5" value="100" aria-label="Master volume"> <span id="volumeVal">100%</span></span></label>
+        <label class="set-row">MUSIC <input id="musicToggle" type="checkbox" checked aria-label="Music on or off"></label>
+        <label class="set-row">SOUND EFFECTS <input id="sfxToggle" type="checkbox" checked aria-label="Sound effects on or off"></label>
+        <label class="set-row">SCREEN SHAKE <input id="shakeToggle" type="checkbox" checked aria-label="Screen shake on or off"></label>
+        <label class="set-row">REDUCE MOTION <input id="motionToggle" type="checkbox" aria-label="Reduce motion on or off"></label>
+      </div>
+      <p class="tagline">Settings save automatically and carry over to your next visit.</p>
+      <button id="closeSettingsBtn" class="btn btn-primary" type="button">DONE</button>
+    </div>
+
+    <div id="achOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="achTitle">
+      <h2 id="achTitle">ACHIEVEMENTS</h2>
+      <p id="achCount" class="tagline">0 / 14 unlocked</p>
+      <div id="achList" class="ach-list"></div>
+      <h3 class="ach-subhead">LIFETIME STATS</h3>
+      <p id="lifetimeStats" class="tagline"></p>
+      <button id="closeAchBtn" class="btn btn-primary" type="button">CLOSE</button>
+    </div>
+
     <div id="introOverlay" class="overlay intro hidden" aria-live="polite">
       <div id="introLevel" class="intro-kicker">LEVEL 1</div>
       <h2 id="introName">FIRST CONTACT</h2>
@@ -89,7 +133,7 @@
 
   <footer class="foot">
     <span>Built by Iggy · <a href="https://github.com/namdev-muse/neon-void-breaker">GitHub</a></span>
-    <span id="version">v0.15.0 — Sprint Block 15</span>
+    <span id="version">v0.16.0 — Sprint Block 16</span>
   </footer>
 </main>
 <script src="game.js"></script>
