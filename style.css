@@ -408,6 +408,10 @@ canvas {
   .btn-ghost { padding: 8px 10px; }
   .draft-card { padding: 14px 10px 12px; }
   .help { font-size: 13px; padding: 10px 12px; }
+  /* Block 16: the toast wraps instead of overflowing a narrow stage. */
+  .ach-toast { font-size: 11px; padding: 7px 12px; max-width: 94%; white-space: normal; text-align: center; }
+  .ach-list { max-height: 200px; }
+  .howto-body { max-height: 240px; }
 }
 
 @media (max-width: 380px) {
@@ -435,4 +439,62 @@ canvas {
   .help { display: none; }
   .foot { margin-top: 8px; }
   canvas { max-height: calc(100dvh - 150px); }
+}
+
+/* Block 16: achievement unlock toast — gold banner over the stage. */
+.ach-toast {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 9px 18px;
+  background: rgba(20, 10, 50, 0.92);
+  border: 1px solid var(--lime);
+  border-radius: 999px;
+  color: var(--lime);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 12px rgba(182, 255, 0, 0.8);
+  box-shadow: 0 0 24px rgba(182, 255, 0, 0.35);
+  white-space: nowrap;
+  animation: toast-in 0.3s ease-out;
+  pointer-events: none;
+}
+.ach-toast.hidden { display: none; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Block 16: achievements panel rows. */
+.ach-list { width: 100%; max-width: 460px; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.ach-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 10px; background: rgba(20, 10, 50, 0.6); }
+.ach-row.unlocked { border-color: rgba(182, 255, 0, 0.55); background: rgba(182, 255, 0, 0.07); }
+.ach-row.locked { opacity: 0.55; }
+.ach-glyph { width: 34px; text-align: center; font-size: 15px; font-weight: 900; text-shadow: 0 0 10px currentColor; flex-shrink: 0; }
+.ach-body { flex: 1; min-width: 0; }
+.ach-name { font-size: 13px; font-weight: 900; letter-spacing: 0.08em; }
+.ach-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.ach-state { font-size: 15px; color: var(--lime); flex-shrink: 0; }
+.ach-subhead { margin: 4px 0 0; font-size: 11px; font-weight: 800; letter-spacing: 0.3em; color: var(--muted); }
+
+/* Block 16: settings rows. */
+.settings-body { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; font-weight: 800; letter-spacing: 0.1em; padding: 8px 4px; border-bottom: 1px solid rgba(0, 240, 255, 0.12); cursor: pointer; }
+.set-row .set-control { display: flex; align-items: center; gap: 8px; }
+.set-row input[type="range"] { width: 150px; accent-color: var(--cyan); }
+.set-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--cyan); cursor: pointer; }
+#volumeVal { font-size: 13px; color: var(--cyan); min-width: 40px; text-align: right; }
+
+/* Block 16: how-to overlay body. */
+.howto-body { width: 100%; max-width: 520px; max-height: 300px; overflow-y: auto; text-align: left; }
+.howto-body h3 { margin: 12px 0 4px; font-size: 11px; font-weight: 800; letter-spacing: 0.3em; color: var(--cyan); }
+.howto-body h3:first-child { margin-top: 0; }
+.howto-body p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+
+/* Block 16: the reduce-motion body class mirrors the media query, so the
+   settings toggle kills the same animations as the OS preference. */
+body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }

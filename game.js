@@ -396,11 +396,47 @@
   const TRAIL_LEN = () => (lowPerf ? 8 : 18);
   const glow = (b) => (lowPerf ? 0 : b);
 
+  // ---------- Settings (backlog #35, #36, #44) ----------
+  // One JSON blob under 'nvb-settings': master volume (0-1), music/SFX
+  // toggles, screen-shake toggle, and an explicit reduce-motion choice
+  // (null = follow the OS, true/false = the player's override). Mute
+  // stays on its own key ('nvb-muted') so the M key keeps working.
+  const SETTINGS_KEY = 'nvb-settings';
+  function loadSettings() {
+    const d = { volume: 1, music: true, sfx: true, shake: true, reduceMotion: null };
+    try {
+      const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+      if (raw && typeof raw === 'object') {
+        if (typeof raw.volume === 'number' && Number.isFinite(raw.volume)) d.volume = Math.max(0, Math.min(1, raw.volume));
+        if (typeof raw.music === 'boolean') d.music = raw.music;
+        if (typeof raw.sfx === 'boolean') d.sfx = raw.sfx;
+        if (typeof raw.shake === 'boolean') d.shake = raw.shake;
+        if (typeof raw.reduceMotion === 'boolean') d.reduceMotion = raw.reduceMotion;
+      }
+    } catch (e) { /* ignore — defaults stand */ }
+    return d;
+  }
+  let settings = loadSettings();
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ }
+  }
+
   // #51: honor prefers-reduced-motion — no screen shake, no confetti, no
   // intro zoom (the CSS side kills the animations). The game stays fully
-  // playable; only the motion garnish goes quiet.
-  const REDUCED_MOTION = typeof window.matchMedia === 'function'
+  // playable; only the motion garnish goes quiet. The settings panel can
+  // override the OS choice; applySettings() recomputes this + the body
+  // class whenever the toggle changes.
+  const OS_REDUCED_MOTION = typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let reduceMotion = settings.reduceMotion !== null ? settings.reduceMotion : OS_REDUCED_MOTION;
+  function applySettings() {
+    reduceMotion = settings.reduceMotion !== null ? settings.reduceMotion : OS_REDUCED_MOTION;
+    if (master) master.gain.value = 0.32 * settings.volume;
+    // The harness stub has no document.body — guard the class toggle.
+    if (typeof document !== 'undefined' && document.body && document.body.classList) {
+      document.body.classList.toggle('reduce-motion', reduceMotion);
+    }
+  }
 
   // Powerup defs (backlog #1, #2, #3, #4, #5, #6, #7, #16): glyph drawn on the capsule.
   const POWERUP_TYPES = {
@@ -467,7 +503,7 @@
       const AC = window.AudioContext || window.webkitAudioContext;
       actx = new AC();
       master = actx.createGain();
-      master.gain.value = 0.32;
+      master.gain.value = 0.32 * settings.volume; // #35: persisted volume
       master.connect(actx.destination);
       // #32: dedicated music bus (so SFX and music can be balanced separately).
       musicGain = actx.createGain();
@@ -552,7 +588,7 @@
   function scheduleMusic() {
     if (!actx || !musicGain) return;
     if (mode === 'paused') { musicNext = actx.currentTime + 0.05; return; }
-    if (muted) { musicNext = actx.currentTime + 0.05; return; }
+    if (muted || !settings.music) { musicNext = actx.currentTime + 0.05; return; } // #36: music toggle
     while (musicNext < actx.currentTime + 0.15) {
       scheduleStep(musicStep, musicNext);
       musicStep++;
@@ -568,7 +604,7 @@
   }
 
   function tone(freq, opts) {
-    if (!actx || muted) return;
+    if (!actx || muted || !settings.sfx) return; // #36: SFX toggle
     const o = opts || {};
     const dur = o.dur || 0.12;
     const type = o.type || 'sine';
@@ -604,7 +640,7 @@
     voidSwallow() {
       tone(620, { dur: 0.6, type: 'sine', gain: 0.4, slideTo: 55 });
       tone(310, { dur: 0.5, type: 'triangle', gain: 0.2, slideTo: 40, delay: 0.05 });
-      if (actx && !muted) noiseHit(actx.currentTime, 0.45, 0.16, master);
+      if (actx && !muted && settings.sfx) noiseHit(actx.currentTime, 0.45, 0.16, master);
     },
     // #34: laser zap — reserved for the laser paddle powerup (#3).
     laser() {
@@ -613,7 +649,7 @@
     },
     // #34: explosion — noise burst plus a low sub drop.
     explosion() {
-      if (actx && !muted) noiseHit(actx.currentTime, 0.5, 0.3, master);
+      if (actx && !muted && settings.sfx) noiseHit(actx.currentTime, 0.5, 0.3, master);
       tone(130, { dur: 0.5, type: 'sawtooth', gain: 0.4, slideTo: 38 });
       tone(65, { dur: 0.55, type: 'sine', gain: 0.35, slideTo: 30, delay: 0.03 });
     },
@@ -633,6 +669,10 @@
     powerup() {
       // #34: brighter rising arpeggio so a catch reads instantly.
       [660, 880, 1320, 1760].forEach((f, i) => tone(f, { dur: 0.12, type: 'triangle', gain: 0.3, delay: i * 0.06 }));
+    },
+    // Block 16: achievement fanfare — a bright three-note chime.
+    achieve() {
+      [1047, 1319, 1568].forEach((f, i) => tone(f, { dur: 0.18, type: 'triangle', gain: 0.3, delay: i * 0.07 }));
     },
   };
 
@@ -679,6 +719,12 @@
     gameOverOverlay.classList.add('hidden');
     introOverlay.classList.add('hidden');
     draftOverlay.classList.add('hidden');
+    // Block 16: the settings / how-to / achievements panels and the toast
+    // hide with everything else when a run starts or quits to the menu.
+    if (settingsOverlay) settingsOverlay.classList.add('hidden');
+    if (howtoOverlay) howtoOverlay.classList.add('hidden');
+    if (achOverlay) achOverlay.classList.add('hidden');
+    if (achToast) achToast.classList.add('hidden');
   }
 
   // Level intro card (backlog #25): named card, auto-dismisses after 1.7s.
@@ -805,6 +851,208 @@
   function fmtTime(ms) {
     const s = Math.floor(ms / 1000);
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  // ---------- Achievements + lifetime stats (Block 16) ----------
+  // 14 achievements, unlocked by run events and lifetime totals. Unlocks
+  // persist in localStorage ('nvb-achievements'), lifetime totals in
+  // 'nvb-lifetime'. An unlock shows a toast, announces to screen readers
+  // and plays a chime; the panel on the menu lists all 14 + the totals.
+  // Element refs for the Block 16 panels (defined here; hideOverlays
+  // above references them, but only runs after the whole file loads).
+  const settingsBtn = $('settingsBtn'), settingsOverlay = $('settingsOverlay');
+  const volumeSlider = $('volumeSlider'), volumeVal = $('volumeVal');
+  const musicToggle = $('musicToggle'), sfxToggle = $('sfxToggle');
+  const shakeToggle = $('shakeToggle'), motionToggle = $('motionToggle');
+  const closeSettingsBtn = $('closeSettingsBtn');
+  const achBtn = $('achBtn'), achOverlay = $('achOverlay');
+  const achList = $('achList'), achCount = $('achCount'), lifetimeStats = $('lifetimeStats');
+  const closeAchBtn = $('closeAchBtn');
+  const howtoBtn = $('howtoBtn');
+  const howtoOverlay = $('howtoOverlay'), playFromHowtoBtn = $('playFromHowtoBtn');
+  const closeHowtoBtn = $('closeHowtoBtn');
+  const achToast = $('achToast');
+
+  const ACH_KEY = 'nvb-achievements';
+  const LIFE_KEY = 'nvb-lifetime';
+  const HOWTO_KEY = 'nvb-seen-howto';
+  const ACHIEVEMENTS = [
+    { id: 'first-blood', name: 'FIRST BLOOD', desc: 'Break your first brick.', glyph: '◆', color: '#00f0ff' },
+    { id: 'combo-3', name: 'TRIPLE THREAT', desc: 'Reach a ×3 combo multiplier.', glyph: '×3', color: '#b6ff00' },
+    { id: 'combo-5', name: 'MAXIMUM HEAT', desc: 'Reach the maximum ×5 combo multiplier.', glyph: '×5', color: '#ff2d95' },
+    { id: 'first-contact', name: 'FIRST CONTACT', desc: 'Clear level 1.', glyph: '1', color: '#00f0ff' },
+    { id: 'gravitys-end', name: "GRAVITY'S END", desc: 'Clear level 5, the Gravity Well.', glyph: '5', color: '#ffb300' },
+    { id: 'core-breaker', name: 'CORE BREAKER', desc: 'Destroy a Void Core.', glyph: '◉', color: '#ff4d6d' },
+    { id: 'void-conquered', name: 'VOID CONQUERED', desc: 'Clear all 10 levels in one run.', glyph: '★', color: '#b6ff00' },
+    { id: 'brick-barrage', name: 'BRICK BARRAGE', desc: 'Break 100 bricks in a single run.', glyph: '100', color: '#00f0ff' },
+    { id: 'thousand-cut', name: 'THOUSAND CUT', desc: 'Break 1,000 bricks across all runs.', glyph: '1K', color: '#8b5cff' },
+    { id: 'flawless', name: 'FLAWLESS', desc: 'Clear a level without losing a ball.', glyph: '✦', color: '#b6ff00' },
+    { id: 'five-ball', name: 'FIVE-BALL FRENZY', desc: 'Have 5 balls flying at once.', glyph: '5●', color: '#b6ff00' },
+    { id: 'shield-savior', name: 'SHIELD SAVIOR', desc: 'Let the shield net save a ball.', glyph: '🛡', color: '#00ffa3' },
+    { id: 'hoarder', name: 'POWERUP HOARDER', desc: 'Catch 10 powerups in a single run.', glyph: '10', color: '#ffb300' },
+    { id: 'high-roller', name: 'HIGH ROLLER', desc: 'Score 50,000 points in a single run.', glyph: '$', color: '#ffb300' },
+  ];
+  const achById = (id) => ACHIEVEMENTS.find((a) => a.id === id) || { id, name: id, desc: '', glyph: '?', color: '#fff' };
+
+  function loadAchievements() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(ACH_KEY) || '[]');
+      if (!Array.isArray(raw)) return [];
+      return raw.filter((id) => ACHIEVEMENTS.some((a) => a.id === id));
+    } catch (e) { return []; }
+  }
+  function saveAchievements() {
+    try { localStorage.setItem(ACH_KEY, JSON.stringify(unlockedAch)); } catch (e) { /* ignore */ }
+  }
+  let unlockedAch = loadAchievements();
+
+  function loadLifetime() {
+    const d = { runs: 0, bricks: 0, elites: 0, bosses: 0, levels: 0, powerups: 0, playMs: 0, bestCombo: 0 };
+    try {
+      const raw = JSON.parse(localStorage.getItem(LIFE_KEY) || 'null');
+      if (raw && typeof raw === 'object') {
+        for (const k of Object.keys(d)) if (typeof raw[k] === 'number' && Number.isFinite(raw[k])) d[k] = raw[k];
+      }
+    } catch (e) { /* ignore */ }
+    return d;
+  }
+  function saveLifetime() {
+    try { localStorage.setItem(LIFE_KEY, JSON.stringify(lifetime)); } catch (e) { /* ignore */ }
+  }
+  let lifetime = loadLifetime();
+  let runUnlocks = []; // ids unlocked this run (shown on the game-over screen)
+  let runTimeBanked = false;
+  let levelStartBallsLost = 0; // balls lost when the current level began (FLAWLESS)
+
+  // Banks this run's play time + best combo into the lifetime totals.
+  // Called once per run, from gameOver() or quitToMenu() — whichever ends
+  // the run first. runStart is set by startRun(); a menu boot has none.
+  function bankRunTime() {
+    if (runTimeBanked || !runStart) return;
+    runTimeBanked = true;
+    lifetime.playMs += Math.max(0, performance.now() - runStart);
+    lifetime.bestCombo = Math.max(lifetime.bestCombo, stats.bestCombo);
+    saveLifetime();
+  }
+
+  // Unlock + celebrate. Idempotent: an already-unlocked id is a no-op,
+  // so a condition checked every frame can't spam the toast.
+  let achToastTimer = null;
+  function unlockAch(id) {
+    if (unlockedAch.indexOf(id) >= 0) return false;
+    const ach = achById(id);
+    unlockedAch.push(id);
+    runUnlocks.push(id);
+    saveAchievements();
+    saveLifetime();
+    if (achToast) {
+      achToast.textContent = '★ ACHIEVEMENT UNLOCKED: ' + ach.name + ' ★';
+      achToast.classList.remove('hidden');
+      if (achToastTimer) clearTimeout(achToastTimer);
+      achToastTimer = setTimeout(() => { achToast.classList.add('hidden'); achToastTimer = null; }, 3500);
+    }
+    floatText(W / 2, 160, '🏆 ' + ach.name + '!', ach.color);
+    announce('Achievement unlocked: ' + ach.name + '. ' + ach.desc);
+    sfx.achieve();
+    updateAchBtn();
+    renderAchievements();
+    return true;
+  }
+  function checkAch(id, cond) { if (cond) unlockAch(id); }
+
+  // ---------- Achievements panel + menu button ----------
+  function renderAchievements() {
+    if (!achList) return;
+    achList.innerHTML = '';
+    ACHIEVEMENTS.forEach((a) => {
+      const got = unlockedAch.indexOf(a.id) >= 0;
+      const row = document.createElement('div');
+      row.classList.add('ach-row');
+      row.classList.add(got ? 'unlocked' : 'locked');
+      const glyph = document.createElement('span');
+      glyph.classList.add('ach-glyph');
+      if (got) glyph.style.color = a.color;
+      glyph.textContent = a.glyph;
+      const body = document.createElement('div');
+      body.classList.add('ach-body');
+      const name = document.createElement('div');
+      name.classList.add('ach-name');
+      name.textContent = a.name;
+      const desc = document.createElement('div');
+      desc.classList.add('ach-desc');
+      desc.textContent = a.desc;
+      body.appendChild(name); body.appendChild(desc);
+      const state = document.createElement('span');
+      state.classList.add('ach-state');
+      state.textContent = got ? '★' : '—';
+      row.appendChild(glyph); row.appendChild(body); row.appendChild(state);
+      achList.appendChild(row);
+    });
+    if (achCount) achCount.textContent = unlockedAch.length + ' / ' + ACHIEVEMENTS.length + ' unlocked';
+    if (lifetimeStats) {
+      lifetimeStats.textContent = 'Runs ' + lifetime.runs
+        + ' · Bricks ' + lifetime.bricks
+        + ' · Elites ' + lifetime.elites
+        + ' · Bosses ' + lifetime.bosses
+        + ' · Levels cleared ' + lifetime.levels
+        + ' · Powerups ' + lifetime.powerups
+        + ' · Best combo ×' + Math.max(1, lifetime.bestCombo)
+        + ' · Play time ' + fmtTime(lifetime.playMs);
+    }
+  }
+  function updateAchBtn() {
+    if (achBtn) achBtn.textContent = '🏆 ACHIEVEMENTS (' + unlockedAch.length + '/' + ACHIEVEMENTS.length + ')';
+  }
+
+  // ---------- Modals: settings (#35, #36, #44), achievements, how-to (#39) ----------
+  // The three panels are plain overlays on top of whatever is underneath
+  // (menu, pause, game over). modalOpen() lets the keydown handler give
+  // them the keyboard while they are up.
+  function modalOpen() {
+    return (settingsOverlay && !settingsOverlay.classList.contains('hidden'))
+      || (achOverlay && !achOverlay.classList.contains('hidden'))
+      || (howtoOverlay && !howtoOverlay.classList.contains('hidden'));
+  }
+  function closeModals() {
+    if (settingsOverlay) settingsOverlay.classList.add('hidden');
+    if (achOverlay) achOverlay.classList.add('hidden');
+    if (howtoOverlay) howtoOverlay.classList.add('hidden');
+    blurActive();
+    if (mode === 'menu') focusEl(playBtn);
+  }
+  // #44: the gear opens settings over the current screen. From a live run
+  // it pauses first, so the game never runs behind the panel; closing
+  // returns to the pause menu (mode stays 'paused').
+  function openSettings() {
+    if (mode === 'playing' || mode === 'serving') pauseGame();
+    syncSettingsControls();
+    if (settingsOverlay) settingsOverlay.classList.remove('hidden');
+    focusEl(closeSettingsBtn);
+  }
+  function syncSettingsControls() {
+    if (volumeSlider) volumeSlider.value = String(Math.round(settings.volume * 100));
+    if (volumeVal) volumeVal.textContent = Math.round(settings.volume * 100) + '%';
+    if (musicToggle) musicToggle.checked = !!settings.music;
+    if (sfxToggle) sfxToggle.checked = !!settings.sfx;
+    if (shakeToggle) shakeToggle.checked = !!settings.shake;
+    if (motionToggle) motionToggle.checked = !!reduceMotion;
+  }
+  function openAchievements() {
+    renderAchievements();
+    if (achOverlay) achOverlay.classList.remove('hidden');
+    focusEl(closeAchBtn);
+  }
+  // #39: the how-to overlay. First visit shows it over the menu
+  // automatically; the menu button reopens it any time.
+  function howtoSeen() {
+    try { return localStorage.getItem(HOWTO_KEY) === '1'; } catch (e) { return false; }
+  }
+  function markHowtoSeen() {
+    try { localStorage.setItem(HOWTO_KEY, '1'); } catch (e) { /* ignore */ }
+  }
+  function openHowto() {
+    if (howtoOverlay) howtoOverlay.classList.remove('hidden');
+    focusEl(playFromHowtoBtn);
   }
 
   // ---------- Level setup ----------
@@ -998,6 +1246,9 @@
       // chip; the blast itself is the feedback (see detonateBomb).
       detonateBomb();
     }
+    lifetime.powerups++; // Block 16
+    checkAch('hoarder', stats.powerupsCaught >= 10);
+    if (type === 'multi') checkAch('five-ball', balls.length >= 5);
     burst(paddle.x + paddle.w / 2, PADDLE_Y, def.color, 16, 240);
     sfx.powerup();
     announce(def.label + ' activated.');
@@ -1162,7 +1413,7 @@
   // sideways flutter, gone in ~3s. Capped so a rapid clear can't flood it.
   const CONFETTI_COLORS = ['#00f0ff', '#ff2d95', '#b6ff00', '#ffb300', '#8b5cff', '#ffffff'];
   function confettiBurst(n) {
-    if (REDUCED_MOTION) return; // #51: no raining paper when motion is reduced
+    if (reduceMotion) return; // #51: no raining paper when motion is reduced
     for (let i = 0; i < n; i++) {
       confetti.push({
         x: 20 + Math.random() * (W - 40),
@@ -1204,6 +1455,9 @@
     // serve — the bot caught a 40px/frame jump on restart. Center it and
     // wait for the player to move.
     runStart = performance.now();
+    lifetime.runs++; saveLifetime(); // Block 16: lifetime stats
+    runUnlocks = []; runTimeBanked = false; levelStartBallsLost = 0;
+    markHowtoSeen(); // Block 16 (#39): starting a run counts as seeing the how-to
     buildLevel(level);
     resetBall();
     particles = []; texts = []; shake = 0; hitStop = 0; rings = []; flashes = []; confetti = [];
@@ -1240,6 +1494,7 @@
   // Resets the run to the attract state; the top-5 table keeps the run's score.
   function quitToMenu() {
     blurActive(); // #41: a focused QUIT button must not eat the next Space
+    bankRunTime(); // Block 16: bank this run's time + best combo before resetStats()
     score = 0; lives = 3; level = 1;
     combo = 0; comboTimer = 0; bricksBrokenRun = 0;
     upgradesOwned = {};
@@ -1279,6 +1534,12 @@
     shake = Math.min(SHAKE_MAX, shake + 8);
     const bonus = levelClearBonus();
     score += bonus;
+    lifetime.levels++; saveLifetime(); // Block 16
+    checkAch('first-contact', level === 1);
+    checkAch('gravitys-end', level === 5);
+    checkAch('flawless', stats.ballsLost === levelStartBallsLost);
+    checkAch('high-roller', score >= 50000);
+    levelStartBallsLost = stats.ballsLost;
     // Block 10 difficulty balance: clearing a level restores +1 life (up
     // to MAX_LIVES). The wells can swallow ~1 ball per level, so without
     // this a perfect-tracking AI bled out across levels 2-4 (4 swallows
@@ -1304,6 +1565,7 @@
     buildLevel(level);
     resetBall();
     combo = 0; comboTimer = 0;
+    levelStartBallsLost = stats.ballsLost; // Block 16 (FLAWLESS resets per level)
     paddle.w = paddleBaseW();
     wideTimer = 0;
     // #3/#4/#6: timed powerups don't carry between levels (like WIDE); the
@@ -1401,6 +1663,8 @@
     const isNewBest = score > prevBest && score > 0;
     saveBest();
     saveScore();
+    bankRunTime(); // Block 16: bank the run's time + best combo
+    checkAch('void-conquered', win);
     mode = 'gameover';
     announce((win ? 'Victory. You conquered the void. ' : 'Game over. ') + 'Score ' + score + '.');
     if (win) sfx.win(); else sfx.over();
@@ -1411,7 +1675,9 @@
       + '<br>Level reached: <strong>' + level + '</strong> &nbsp;·&nbsp; Time ' + fmtTime(performance.now() - runStart)
       // #11: run stats — best combo, bricks broken, shot accuracy, powerups.
       + '<br>Best combo <strong>×' + Math.max(1, stats.bestCombo) + '</strong> &nbsp;·&nbsp; Bricks <strong>' + stats.bricksBroken + '</strong> &nbsp;·&nbsp; Accuracy <strong>' + accuracy() + '%</strong>'
-      + '<br>Powerups caught <strong>' + stats.powerupsCaught + '</strong> &nbsp;·&nbsp; missed <strong>' + stats.powerupsMissed + '</strong>';
+      + '<br>Powerups caught <strong>' + stats.powerupsCaught + '</strong> &nbsp;·&nbsp; missed <strong>' + stats.powerupsMissed + '</strong>'
+      // Block 16: achievements unlocked this run, if any.
+      + (runUnlocks.length ? '<br>🏆 Unlocked: <strong>' + runUnlocks.map((id) => achById(id).name).join(', ') + '</strong>' : '');
     hideOverlays();
     renderScores(lastScoreRank);
     gameOverOverlay.classList.remove('hidden');
@@ -1502,6 +1768,14 @@
       comboTimer = comboWindow();
       bricksBrokenRun++;
       stats.bricksBroken++; // #11
+      lifetime.bricks++; // Block 16
+      if (b.elite) lifetime.elites++;
+      if (b.boss) { lifetime.bosses++; checkAch('core-breaker', true); }
+      checkAch('first-blood', bricksBrokenRun === 1);
+      checkAch('combo-3', mult() >= 3);
+      checkAch('combo-5', mult() >= 5);
+      checkAch('brick-barrage', stats.bricksBroken >= 100);
+      checkAch('thousand-cut', lifetime.bricks >= 1000);
       // #20: elite bricks drop powerups twice as often.
       maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2, b.elite ? ELITE_DROP_CHANCE : undefined);
       // #24: the Core is worth its bounty; everything else uses its table score.
@@ -1614,6 +1888,7 @@
         ball.y = H - BALL_R - 1;
         ball.vy = -Math.abs(ball.vy);
         floatText(ball.x, H - 40, 'SHIELD SAVED!', SHIELD_COLOR);
+        checkAch('shield-savior', true); // Block 16
         burst(ball.x, H - 6, SHIELD_COLOR, 20, 260);
         ringBurst(ball.x, H - 6, SHIELD_COLOR, 80);
         shake = Math.min(SHAKE_MAX, shake + 4);
@@ -1773,7 +2048,7 @@
     }
     shake *= Math.pow(0.001, dt);
     if (shake < 0.05) shake = 0;
-    if (REDUCED_MOTION) shake = 0; // #51: no screen shake when motion is reduced
+    if (reduceMotion || !settings.shake) shake = 0; // #51/#44: no screen shake when motion is reduced or shake is off
 
     if (mode === 'playing') {
       if (combo > 0) {
@@ -1940,8 +2215,14 @@
   function render(t) {
     ctx.clearRect(0, 0, W, H);
     ctx.save();
-    if (shake > 0) {
-      ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+    // Block 16 (#44): the effective shake — zero when shake is off or
+    // motion is reduced, so no shake ever renders in those modes. (The
+    // stored value is zeroed in update() too, but brick breaks set it
+    // mid-update, after that zeroing runs — gating here is what makes the
+    // off switch airtight, including on hit-stop frames.)
+    const effShake = (reduceMotion || !settings.shake) ? 0 : shake;
+    if (effShake > 0) {
+      ctx.translate((Math.random() - 0.5) * effShake, (Math.random() - 0.5) * effShake);
     }
 
     // Background.
@@ -2215,7 +2496,10 @@
   }, { passive: false });
 
   window.addEventListener('keydown', (e) => {
-    if (['Space', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+    // Block 16: an input (volume slider, settings checkbox) owns its keys
+    // — Space/arrows must reach it natively instead of scrolling the page.
+    const onInput = e.target && e.target.tagName === 'INPUT';
+    if (['Space', 'ArrowLeft', 'ArrowRight'].includes(e.code) && !onInput) e.preventDefault();
     ensureAudio();
     if (e.repeat) return;
     keys.add(e.code);
@@ -2223,6 +2507,13 @@
     // instead of a game action firing underneath it at the same time.
     const onButton = e.target && e.target.tagName === 'BUTTON';
     if (onButton && (e.code === 'Space' || e.code === 'Enter')) return;
+    // Block 16: a settings / how-to / achievements modal owns the
+    // keyboard while it is open — no game action fires underneath it.
+    // Escape closes the top modal; every other key is swallowed.
+    if (modalOpen()) {
+      if (e.code === 'Escape') closeModals();
+      return;
+    }
     // #41: ← → moves keyboard focus across the draft cards (Tab works too).
     if (mode === 'draft' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
       moveDraftFocus(e.code === 'ArrowRight' ? 1 : -1);
@@ -2281,6 +2572,22 @@
   $('menuBtnOver').addEventListener('click', quitToMenu);
   pauseBtn.addEventListener('click', () => { ensureAudio(); togglePause(); });
   muteBtn.addEventListener('click', () => { ensureAudio(); toggleMute(); });
+  // Block 16: settings / achievements / how-to buttons + panel controls.
+  settingsBtn.addEventListener('click', () => { ensureAudio(); openSettings(); });
+  achBtn.addEventListener('click', openAchievements);
+  howtoBtn.addEventListener('click', () => openHowto());
+  closeSettingsBtn.addEventListener('click', closeModals);
+  closeAchBtn.addEventListener('click', closeModals);
+  closeHowtoBtn.addEventListener('click', () => { markHowtoSeen(); closeModals(); });
+  playFromHowtoBtn.addEventListener('click', () => { markHowtoSeen(); startRun(); });
+  volumeSlider.addEventListener('input', () => {
+    settings.volume = Math.max(0, Math.min(1, (parseFloat(volumeSlider.value) || 0) / 100));
+    saveSettings(); applySettings(); syncSettingsControls();
+  });
+  musicToggle.addEventListener('change', () => { settings.music = !!musicToggle.checked; saveSettings(); });
+  sfxToggle.addEventListener('change', () => { settings.sfx = !!sfxToggle.checked; saveSettings(); });
+  shakeToggle.addEventListener('change', () => { settings.shake = !!shakeToggle.checked; saveSettings(); });
+  motionToggle.addEventListener('change', () => { settings.reduceMotion = !!motionToggle.checked; saveSettings(); applySettings(); });
 
   // ---------- Boot ----------
   buildLevel(1);
@@ -2297,13 +2604,37 @@
   hideOverlays();
   menuOverlay.classList.remove('hidden');
   focusEl(playBtn); // #41: keyboard players start on PLAY, no Tab hunt
+  // Block 16: achievements panel + settings controls start in sync with
+  // the persisted state; a first visit opens the how-to over the menu.
+  renderAchievements();
+  updateAchBtn();
+  syncSettingsControls();
+  applySettings();
+  if (!howtoSeen()) openHowto();
 
   // #46: perf state for the bot harness and the browser console —
   // `window.__nvbPerf.fps` (EMA), `.lowPerf`, `.reducedMotion`.
   window.__nvbPerf = {
     get fps() { return fpsEma; },
     get lowPerf() { return lowPerf; },
-    get reducedMotion() { return REDUCED_MOTION; },
+    get reducedMotion() { return reduceMotion; },
+    // Block 16: the effective (rendered) shake — zero when shake is off
+    // or motion is reduced, so the harness can prove the toggle works.
+    get shake() { return (reduceMotion || !settings.shake) ? 0 : shake; },
+    // Block 16: live settings for the bot harness and the console.
+    get settings() {
+      return { volume: settings.volume, music: settings.music, sfx: settings.sfx,
+        shake: settings.shake, reduceMotion };
+    },
+  };
+
+  // Block 16: achievements + lifetime stats for the bot harness and the
+  // browser console — unlocked ids, this run's unlocks, lifetime totals.
+  window.__nvbAch = {
+    get unlocked() { return unlockedAch.slice(); },
+    get runUnlocks() { return runUnlocks.slice(); },
+    get lifetime() { return Object.assign({}, lifetime); },
+    get total() { return ACHIEVEMENTS.length; },
   };
 
   // #12 / #19: run metadata for the bot harness and the browser console —
