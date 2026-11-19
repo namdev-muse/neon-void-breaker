@@ -21,8 +21,11 @@ const SRC12 = SRC
   .replace("if (Math.random() >= (chance || POWERUP_DROP_CHANCE)) return;", "")
   .replace("const type = r < 0.20 ? 'multi' : r < 0.36 ? 'wide' : r < 0.52 ? 'laser' : r < 0.64 ? 'slow' : r < 0.76 ? 'shield' : r < 0.88 ? 'fire' : 'bomb';",
     "const type = ['laser','slow','shield','multi','wide','fire','bomb'][(global.__pu = (global.__pu || 0) + 1) % 7];")
-  .replace("const mag = upgradesOwned.magnet || 0;", "const mag = 3;");
-if (SRC12 === SRC || SRC12.indexOf("global.__pu") < 0) { console.log('PATCH FAILED'); process.exit(2); }
+  .replace("const mag = upgradesOwned.magnet || 0;", "const mag = 3;")
+  // Block 17 (#23): regen bricks return after 2s in the harness (20s
+  // in the real game) so a respawn is observable inside one level.
+  .replace("const REGEN_DELAY = 20;", "const REGEN_DELAY = 2;");
+if (SRC12 === SRC || SRC12.indexOf("global.__pu") < 0 || SRC12.indexOf("REGEN_DELAY = 2") < 0) { console.log('PATCH FAILED'); process.exit(2); }
 
 const ATTEMPTS = parseInt(process.argv[2] || '2', 10) || 2;
 const MAX_FRAMES = parseInt(process.argv[3] || '160000', 10) || 160000;
@@ -208,12 +211,19 @@ const obs = {
   bootSig: '', brickSigs: [],
   // Block 16 observations (achievements + settings)
   achToastSeen: false, maxShakeSeen: 0, lastGameOverHtml: '',
+  // Block 17 observations (#21 moving, #22 exploding, #23 regen bricks)
+  kindsSeen: { moving: false, explosive: false, regen: false },
+  moverMoved: false, chains: 0, chainKills: 0, regens: 0,
 };
 let prevBall = null, prevLives = 3, prevScore = 0, prevAngle = null, prevInZone = false;
 let fireCheckFrame = -1, fireAngleBefore = 0; // Block 12: pierce check state
 let frozenFrames = 0, pendingCrossing = null, prevLevelOverlay = false;
 let prevTexts = new Set();
 let prevLevelObs = 1;
+// Block 17: the signature from the previous observe() call, for the
+// mover proof (a sliding x is the only thing that can change it while
+// the level, the score and the brick count all stay put).
+let prevSig17 = '', prevSigLevel17 = 0, prevSigScore17 = 0;
 // Called at the start of every attempt: a fresh run resets the score and
 // the level, so the monotonic-score and motion trackers must not carry
 // the previous run's values across the reset.
@@ -259,6 +269,33 @@ function observe() {
   if (toast) obs.achToastSeen = true;
   const perf = global.window.__nvbPerf;
   if (perf && typeof perf.shake === 'number' && perf.shake > obs.maxShakeSeen) obs.maxShakeSeen = perf.shake;
+  // Block 17 (#21/#22/#23): latch the new brick kinds and the chain /
+  // regen counters from __nvbMeta (max across attempts, since the
+  // counters reset per run). Mover proof: the layout signature changes
+  // with no score change, no level change and no brick-count change —
+  // only a sliding x can do that. A regen respawn changes the count and
+  // a break changes the score, so neither can fake it; the y:hp
+  // multiset comparison pins it down to an x-only shift.
+  const meta17 = global.window.__nvbMeta;
+  if (meta17) {
+    const k = meta17.kinds;
+    if (k) {
+      if (k.moving > 0) obs.kindsSeen.moving = true;
+      if (k.explosive > 0) obs.kindsSeen.explosive = true;
+      if (k.regen > 0) obs.kindsSeen.regen = true;
+    }
+    if (typeof meta17.chains === 'number') obs.chains = Math.max(obs.chains, meta17.chains);
+    if (typeof meta17.chainKills === 'number') obs.chainKills = Math.max(obs.chainKills, meta17.chainKills);
+    if (typeof meta17.regens === 'number') obs.regens = Math.max(obs.regens, meta17.regens);
+    const sig17 = meta17.levelSig || '';
+    if (sig17 && prevSig17 && sig17 !== prevSig17 && lv === prevSigLevel17 && sc === prevSigScore17) {
+      const a = prevSig17.split(',').map((s) => s.split(':'));
+      const b2 = sig17.split(',').map((s) => s.split(':'));
+      const yh = (arr) => arr.map((e) => e[1] + ':' + e[2]).sort().join('|');
+      if (a.length === b2.length && yh(a) === yh(b2)) obs.moverMoved = true;
+    }
+    prevSig17 = sig17; prevSigLevel17 = lv; prevSigScore17 = sc;
+  }
   if (lv > obs.maxLevel) obs.maxLevel = lv;
   const scoreJump = sc > prevScore;
   if (sc < prevScore) obs.nanEvents.push('score decreased ' + prevScore + ' -> ' + sc);
@@ -664,7 +701,7 @@ check('audit: NaN velocity guard present', SRC.includes('Number.isFinite(ball.vx
 
 console.log('== HTML ==');
 const html = fs.readFileSync(HTML, 'utf8');
-check('HTML: version v0.16.0', html.includes('v0.16.0'));
+check('HTML: version v0.17.0', html.includes('v0.17.0'));
 
 console.log('== bot playtest (#45) ==');
 let attemptResults = [];
@@ -918,6 +955,36 @@ check('settings: volume/music/shake persisted after the run',
   && global.window.__nvbPerf.settings.music === true
   && global.window.__nvbPerf.settings.shake === false);
 
+console.log('== Block 17 (#21 moving, #22 exploding, #23 regen bricks + boss music) ==');
+check('bricks: moving bricks appear in the run (kinds seen)', obs.kindsSeen.moving);
+check('bricks: exploding bricks appear in the run (kinds seen)', obs.kindsSeen.explosive);
+check('bricks: regen bricks appear in the run (kinds seen)', obs.kindsSeen.regen);
+check('movers: a moving brick actually slid (x-only signature shift, score/level/count unchanged)',
+  obs.moverMoved);
+check('movers: slide range + speed + home columns in source',
+  SRC.includes('MOVER_SPEED') && SRC.includes('MOVER_RANGE') && SRC.includes('homeX')
+  && SRC.includes('moveDir'));
+check('explosive: a chain explosion fired (chains=' + obs.chains + ')', obs.chains > 0,
+  'chains=' + obs.chains);
+check('explosive: the chain destroyed extra bricks (chainKills=' + obs.chainKills + ')',
+  obs.chainKills > 0, 'chainKills=' + obs.chainKills);
+check('explosive: chain damages neighbours via damageBrick',
+  SRC.includes('function explodeBrick') && SRC.includes('CHAIN_GAP') && SRC.includes('damageBrick(br)'));
+check('explosive: chain that clears the level returns early (no double clear)',
+  SRC.includes("explodeBrick(b) === 'clear'"));
+check('regen: a brick regenerated (regens=' + obs.regens + ', 2s harness delay)',
+  obs.regens > 0, 'regens=' + obs.regens);
+check('regen: respawn capped at 2 per brick in source',
+  SRC.includes('REGEN_MAX = 2') && SRC.includes('respawnsLeft'));
+check('regen: ghost outline + refill bar render while counting down',
+  SRC.includes('respawnIn') && SRC.includes('REGENERATED!'));
+check('music: boss fight uses darker chords (BOSS_CHORDS Am-F-E-G)',
+  SRC.includes('BOSS_CHORDS') && SRC.includes('[52, 56, 59]'));
+check('music: boss fight holds intensity at ×3 or higher',
+  SRC.includes("(boss && boss.alive) ? 3 : 1"));
+check('bricks: kinds + counters exposed via __nvbMeta',
+  SRC.includes('get kinds()') && SRC.includes('get chains()') && SRC.includes('get regens()'));
+
 console.log('\n== coverage report ==');
 console.log('attempts: ' + JSON.stringify(attemptResults));
 console.log('levels cleared: ' + JSON.stringify(obs.levelsCleared) + ' (max level reached ' + obs.maxLevel + ')');
@@ -944,6 +1011,9 @@ console.log('block 16: achievements unlocked=' + (global.window.__nvbAch && glob
   + '/' + (global.window.__nvbAch && global.window.__nvbAch.total)
   + ' · toastSeen=' + obs.achToastSeen + ' · maxShake=' + obs.maxShakeSeen.toFixed(2)
   + ' · lifetime=' + JSON.stringify(global.window.__nvbAch && global.window.__nvbAch.lifetime));
+console.log('block 17: kinds seen=' + JSON.stringify(obs.kindsSeen)
+  + ' · moverMoved=' + obs.moverMoved + ' · chains=' + obs.chains
+  + ' chainKills=' + obs.chainKills + ' · regens=' + obs.regens);
 console.log('brick signatures: boot=' + JSON.stringify(obs.bootSig)
   + ' attempts=' + JSON.stringify(obs.brickSigs));
 console.log('paddle crossings: ' + obs.crossings + ' · bounces: ' + obs.bounces
