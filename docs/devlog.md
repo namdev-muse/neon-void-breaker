@@ -147,11 +147,52 @@ A second script, `tests/live-smoke.js`, checks the deployed site after
 every push: the page, bundle and stylesheet answer 200 and carry the
 current version, retrying while GitHub Pages finishes deploying.
 
+## Block 18 — save &amp; continue, playtest pass 2
+
+Mid-run saves landed: the run checkpoints to localStorage every 5s of
+live play, on pause, on entering a fresh level, and when the tab closes,
+and the menu offers a CONTINUE button (level + score in the label) that
+restores the whole run — bricks with their HP and kind state, well
+phases and meals, falling capsules, powerup timers, upgrades, stats and
+the run clock. The ball is re-served glued to the paddle instead of
+restored mid-flight, so a refresh can never resume on top of a brick or
+inside a well. A corrupt save is rejected and hides CONTINUE; a fresh
+run or a game over clears the save.
+
+The same block ran playtest pass 2 with a human-like bot: a version that
+predicts the ball's landing spot from its velocity (correcting every
+100ms with ±25px of aim error) wins the whole game even at the real 12%
+drop rate, while versions that merely chase the ball die on levels 1–2.
+The probe's real finding was in the curve, not the bot: the ball-speed
+ramp saturated (+120) inside level 1, so level 2 — the first void well —
+arrived at 536px/s, 40% faster than the 380 the player had just learned
+on. The ramp now saturates over ~2 levels (level 2 starts at 476) and
+the first well bends at 0.6 instead of 0.8; the endgame cap (680) and
+later wells are untouched.
+
 The screenshots in this repo were captured the same way: the bot played
 the real game in headless Chromium (Playwright) while screenshots were
 taken mid-flight. No staged mockups — every pixel is the live game.
 
+## Block 19 — favicon, meta &amp; PWA-lite polish
+
+The game now has a real identity outside the tab. A proper `favicon.svg`
+replaces the inline data-URI icon, with matching 192px / 512px PNG icons
+and a 180px Apple touch icon, all drawn from the same neon design: pink
+brick, violet void ring, cyan ball, lime paddle on the deep-space
+background. `manifest.webmanifest` makes the game installable —
+standalone display, portrait orientation, theme colour `#0b0620` — and
+Open Graph / Twitter meta tags point at the real gameplay screenshot, so
+a shared link shows the game instead of a blank card.
+
+Offline works too: `sw.js` caches the whole app shell (page, styles,
+game, icons, manifest, screenshot) on first visit, with a versioned
+cache name (`nvb-v0.19.0`) so each release replaces the old shell, and
+old caches are deleted on activation. Registration is guarded — it only
+runs over HTTP(S) in browsers with service-worker support, and a failed
+registration is silently ignored, so the game never depends on the
+worker to play.
+
 ## What's next
 
-Achievements, more powerups, accessibility and cross-browser passes,
-PWA-lite polish, and a v1.0 release tag. See the roadmap in the README.
+Cross-browser checks, release notes and a v1.0 tag. See the roadmap in the README.
