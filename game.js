@@ -16,6 +16,10 @@
 
   // '1' = 50pts hp1 cyan, '2' = 100pts hp2 pink, '3' = 150pts hp3 amber, '.' = empty
   // 'E' = 300pts hp5 elite violet (backlog #20: armored elite rows)
+  // Block 17 (#21, #22, #23): 'M' = moving brick (hp1, 100pts, slides
+  // sideways), 'X' = exploding brick (hp1, 100pts, chain-damages its
+  // neighbours when destroyed), 'R' = regenerating brick (hp2, 150pts,
+  // comes back 20s after being broken, twice per level at most).
   const LEVELS = [
     [
       '111111111111',
@@ -25,7 +29,7 @@
       '111111111111',
     ],
     [
-      '1..333333..1',
+      'M..333333..M',
       '.1222222221.',
       '..13333333..',
       '..13333333..',
@@ -33,18 +37,18 @@
       '1..333333..1',
     ],
     [
-      '.....33.....',
+      '....M33M....',
       '....3333....',
       '...322223...',
       '..32222223..',
       '.3222222223.',
-      '333333333333',
+      '33X333333X33',
       '111111111111',
     ],
     // Level 4 — STARFORGE: an elite armored row (#20) over a soft core.
     [
       'EEEEEEEEEEEE',
-      '2..........2',
+      '2....RR....2',
       '211111111112',
       '212222222212',
       '212333333212',
@@ -57,7 +61,7 @@
       '3..........3',
       '3.22222222.3',
       '3.21111112.3',
-      '3.21333312.3',
+      '3.21X33312.3',
       '3.21111112.3',
       '3.22222222.3',
       '3..........3',
@@ -68,11 +72,11 @@
       '333333333333',
       '222222222222',
       'E3333333333E',
-      '231111111132',
+      '231M11111M32',
       '231233332132',
       '231111111132',
       '233333333332',
-      '222222222222',
+      '222R2222R222',
     ],
     // Level 7 — VOID MAZE (backlog #19): corridors within corridors.
     [
@@ -80,34 +84,34 @@
       '3..........3',
       '3.22222222.3',
       '3.2......2.3',
-      '3.2.3333.2.3',
+      '3.2.X33X.2.3',
       '3.2.3..3.2.3',
       '3.2.3333.2.3',
       '3.2......2.3',
-      '3.22222222.3',
+      '3.M222222M.3',
       '3..........3',
       '333333333333',
     ],
     // Level 8 — TWIN PEAKS (backlog #19): two spires, one way through.
     [
-      '...33..33...',
+      '...R3..3R...',
       '.3333..3333.',
       '.3223..3223.',
       '.3222..2223.',
       '322223322223',
-      '333333333333',
+      '333X3333X333',
       '111111111111',
     ],
     // Level 9 — THE GAUNTLET (backlog #19): armored to the teeth.
     [
       'EEEEEEEEEEEE',
       '333333333333',
-      '2..........2',
+      '2....MM....2',
       '211111111112',
       '212222222212',
-      '212333333212',
+      '212X33333X12',
       '212222222212',
-      '211111111112',
+      '211R11111R12',
     ],
     // Level 10 — EVENT HORIZON (backlog #19): the final wall. Clear it
     // and the Void Core Prime wakes — 16 HP, 2500 points, the last gate.
@@ -115,9 +119,9 @@
       '333333333333',
       '3E33333333E3',
       '32E333333E32',
-      '322333333223',
-      '322211112223',
-      '322233332223',
+      '322M33333M23',
+      '322R1111R223',
+      '322X33333X23',
       '322211112223',
       '322333333223',
       '333333333333',
@@ -148,6 +152,23 @@
   const ELITE_HP = 5;
   const ELITE_DROP_CHANCE = 0.25;
 
+  // Block 17 (#21, #22, #23) — new brick kinds. Movers slide sideways
+  // around their home column (±MOVER_RANGE px at MOVER_SPEED, bouncing at
+  // the ends); exploders chain-damage every live brick whose rect touches
+  // theirs (expanded by CHAIN_GAP, so all 8 neighbours catch the blast);
+  // regenerators come back REGEN_DELAY seconds after being broken, at
+  // most REGEN_MAX times each — break the rest of the wall fast enough
+  // and the level still clears before they return.
+  const MOVER_SPEED = 36;   // px per second
+  const MOVER_RANGE = 28;   // px either side of the home column
+  const CHAIN_GAP = 8;      // px of reach past the exploding brick's rect
+  const REGEN_DELAY = 20;   // seconds until a broken regen brick returns
+  const REGEN_MAX = 2;      // respawns per regen brick, then it stays dead
+  const KIND_COLORS = { moving: '#7dff5e', explosive: '#ff6b35', regen: '#67e8f9' };
+  const KIND_GLYPHS = { moving: '↔', explosive: '✸', regen: '↻' };
+  const KIND_SCORE = { moving: 100, explosive: 100, regen: 150 };
+  const KIND_HP = { moving: 1, explosive: 1, regen: 2 };
+
   // ---------- Mini-boss: the Void Core (backlog #24) ----------
   // At the end of a boss level, once every normal brick is broken, the
   // Void Core awakens — one big brick (240x40) with its own HP and a
@@ -163,6 +184,14 @@
   };
   const BOSS_W = 240, BOSS_H = 40;
   const BOSS_COLOR = '#ff4d6d';
+
+  // Block 17: one place that decides a brick's colour — the boss glows
+  // red, each new kind gets its own neon, everything else uses its HP.
+  function brickColor(b) {
+    if (b.boss) return BOSS_COLOR;
+    if (b.kind) return KIND_COLORS[b.kind];
+    return BRICK_COLORS[b.hp] || '#00f0ff';
+  }
 
   // ---------- Void wells (backlog #14, #15, #17) ----------
   // The signature mechanic: black holes that bend the ball's trajectory
@@ -379,6 +408,12 @@
   const SHIELD_COLOR = '#00ffa3';
   let lastPowerText = '—';
 
+  // Block 17 (#21, #22, #23): run-scoped counters for the new brick
+  // kinds, exposed via window.__nvbMeta for the bot harness — chain
+  // explosions fired, bricks destroyed by those chains, regen bricks
+  // that came back. Reset on every startRun / quitToMenu.
+  let chainBursts = 0, chainKills = 0, regenCount = 0;
+
   // ---------- FPS guard (backlog #46) ----------
   // The render degrades instead of stuttering: frame times feed an EMA,
   // and sustained <45 FPS switches to low-perf mode (no shadowBlur, fewer
@@ -531,6 +566,15 @@
     [48, 55, 60], // C
     [55, 59, 62], // G
   ];
+  // Block 17 (audio polish): while a Void Core lives, the music turns
+  // darker — Am–F–E–G instead of Am–F–C–G — and the intensity floor
+  // rises to ×3, so the fight sounds like a fight, not a warm-up.
+  const BOSS_CHORDS = [
+    [57, 60, 64], // Am
+    [53, 57, 60], // F
+    [52, 56, 59], // E
+    [55, 59, 62], // G
+  ];
   const ARP_PATTERN = [0, 1, 2, 1, 0, 2, 1, 2];
   const midiToFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -561,10 +605,13 @@
   // hats (×2), sparkle notes (×3) and a double-time arp echo (×4+), so the
   // music audibly heats up as the run heats up.
   function scheduleStep(step, when) {
-    const bar = Math.floor(step / 8) % MUSIC_CHORDS.length;
-    const chord = MUSIC_CHORDS[bar];
+    // Block 17: a live Void Core swaps in the darker progression and
+    // holds the intensity at ×3 or higher for the whole boss fight.
+    const chords = (boss && boss.alive) ? BOSS_CHORDS : MUSIC_CHORDS;
+    const bar = Math.floor(step / 8) % chords.length;
+    const chord = chords[bar];
     const inBar = step % 8;
-    const intensity = mult();
+    const intensity = Math.max(mult(), (boss && boss.alive) ? 3 : 1);
     // Bass: root an octave down on beats 1 and 3 of the bar.
     if (inBar === 0 || inBar === 4) {
       musicNote(midiToFreq(chord[0] - 12), when, 0.42, 'triangle', 0.30);
@@ -652,6 +699,12 @@
       if (actx && !muted && settings.sfx) noiseHit(actx.currentTime, 0.5, 0.3, master);
       tone(130, { dur: 0.5, type: 'sawtooth', gain: 0.4, slideTo: 38 });
       tone(65, { dur: 0.55, type: 'sine', gain: 0.35, slideTo: 30, delay: 0.03 });
+    },
+    // Block 17 (#23): a regen brick comes back — a rising shimmer, so
+    // the player hears the wall heal even while watching the ball.
+    regen() {
+      tone(520, { dur: 0.18, type: 'sine', gain: 0.25, slideTo: 1040 });
+      tone(780, { dur: 0.18, type: 'sine', gain: 0.2, slideTo: 1560, delay: 0.08 });
     },
     // #5: the shield net catches a ball — a bright rising chord.
     shield() {
@@ -1115,11 +1168,30 @@
       for (let c = 0; c < cols; c++) {
         const ch = map[r][c];
         if (ch === '.' || ch === undefined) continue;
-        const hp = ch === 'E' ? ELITE_HP : parseInt(ch, 10);
-        bricks.push({
-          x: margin + c * (bw + gap), y: top + r * (bh + gap),
+        // Block 17 (#21, #22, #23): 'M' moving, 'X' exploding, 'R'
+        // regenerating — kind, HP and score come from the KIND_* tables;
+        // 'E' stays the elite, digits stay plain bricks.
+        const kind = ch === 'M' ? 'moving' : ch === 'X' ? 'explosive' : ch === 'R' ? 'regen' : null;
+        const hp = kind ? KIND_HP[kind] : ch === 'E' ? ELITE_HP : parseInt(ch, 10);
+        const x = margin + c * (bw + gap);
+        const brick = {
+          x, y: top + r * (bh + gap),
           w: bw, h: bh, hp, maxHp: hp, alive: true, elite: ch === 'E',
-        });
+          kind, scoreVal: kind ? KIND_SCORE[kind] : 0,
+        };
+        if (kind === 'moving') {
+          // Slide around the home column, alternating direction by
+          // column so a row of movers doesn't march in lockstep.
+          brick.homeX = x;
+          brick.minX = Math.max(8, x - MOVER_RANGE);
+          brick.maxX = Math.min(W - bw - 8, x + MOVER_RANGE);
+          brick.moveDir = (c % 2 === 0) ? 1 : -1;
+        }
+        if (kind === 'regen') {
+          brick.respawnsLeft = REGEN_MAX;
+          brick.respawnIn = 0; // seconds until it returns, once broken
+        }
+        bricks.push(brick);
       }
     }
     buildWells(n);
@@ -1287,6 +1359,41 @@
     }
   }
 
+  // Block 17 (#22): an exploding brick's chain reaction. Every live
+  // brick whose rect touches the blast (the brick's own rect grown by
+  // CHAIN_GAP — the 6px gaps mean all 8 neighbours catch it) takes 1 HP
+  // through the normal damageBrick path, so combos, drops, the boss wake
+  // and the level-clear check all behave as if the ball had done it. A
+  // neighbour that dies as an exploder detonates in turn — the chain
+  // only ever runs downhill, because damageBrick is only called on live
+  // bricks and a dead brick never explodes twice. The snapshot is taken
+  // up front and the loop stops the moment the mode leaves play (a chain
+  // that clears the level, or wakes the Core, ends there).
+  function explodeBrick(b) {
+    const hits = bricks.filter((br) => br.alive && br !== b
+      && br.x < b.x + b.w + CHAIN_GAP && br.x + br.w > b.x - CHAIN_GAP
+      && br.y < b.y + b.h + CHAIN_GAP && br.y + br.h > b.y - CHAIN_GAP);
+    chainBursts++;
+    floatText(b.x + b.w / 2, b.y - 6, 'BOOM!', KIND_COLORS.explosive);
+    ringBurst(b.x + b.w / 2, b.y + b.h / 2, KIND_COLORS.explosive, 90);
+    burst(b.x + b.w / 2, b.y + b.h / 2, KIND_COLORS.explosive, 22, 380);
+    burst(b.x + b.w / 2, b.y + b.h / 2, '#ffffff', 10, 260);
+    shake = Math.min(SHAKE_MAX, shake + 5);
+    sfx.explosion();
+    let kills = 0;
+    for (const br of hits) {
+      if (mode !== 'playing' || !br.alive) continue;
+      damageBrick(br);
+      if (!br.alive) { kills++; chainKills++; }
+      if (mode !== 'playing') break;
+    }
+    if (kills >= 2) floatText(W / 2, 200, 'CHAIN ×' + (kills + 1) + '!', KIND_COLORS.explosive);
+    // A chain that cleared the level leaves mode changed — the caller
+    // must not run its own clear check on top of it. (Waking the Core
+    // keeps mode 'playing', so the chain just keeps going.)
+    return mode === 'playing' ? 'ok' : 'clear';
+  }
+
   function updatePowerups(dt) {
     for (let i = powerups.length - 1; i >= 0; i--) {
       const p = powerups[i];
@@ -1447,6 +1554,7 @@
     wideTimer = 0;
     laserTimer = 0; laserCooldown = 0; slowTimer = 0; shieldActive = false; // #3/#4/#5
     fireTimer = 0; // #6
+    chainBursts = 0; chainKills = 0; regenCount = 0; // Block 17
     bolts = [];
     powerups = [];
     paddle.x = (W - paddle.w) / 2;
@@ -1505,6 +1613,7 @@
     wideTimer = 0;
     laserTimer = 0; laserCooldown = 0; slowTimer = 0; shieldActive = false; // #3/#4/#5
     fireTimer = 0; // #6
+    chainBursts = 0; chainKills = 0; regenCount = 0; // Block 17
     bolts = [];
     powerups = [];
     paddle.x = (W - paddle.w) / 2;
@@ -1759,8 +1868,9 @@
   // is already up by then), 'boss' when the Void Core just woke, else 'ok'.
   function damageBrick(b) {
     b.hp--;
-    // #20 / #24: elite bricks glow violet, the Void Core glows red.
-    const color = b.boss ? BOSS_COLOR : BRICK_COLORS[b.maxHp];
+    // Block 17: colour comes from brickColor() — boss red, each new
+    // kind its own neon, everything else its HP table colour.
+    const color = brickColor(b);
     if (b.hp <= 0) {
       b.alive = false;
       combo++;
@@ -1778,10 +1888,19 @@
       checkAch('thousand-cut', lifetime.bricks >= 1000);
       // #20: elite bricks drop powerups twice as often.
       maybeDropPowerup(b.x + b.w / 2, b.y + b.h / 2, b.elite ? ELITE_DROP_CHANCE : undefined);
-      // #24: the Core is worth its bounty; everything else uses its table score.
+      // Block 17: a regen brick that still has respawns left isn't gone
+      // for good — it comes back after REGEN_DELAY seconds (see the
+      // regen tick in update()). The level can still clear before it
+      // returns, if the rest of the wall falls fast enough.
+      if (b.kind === 'regen' && b.respawnsLeft > 0) {
+        b.respawnsLeft--;
+        b.respawnIn = REGEN_DELAY;
+      }
+      // #24: the Core is worth its bounty; a special brick uses its kind
+      // score; everything else uses its table score.
       const pts = b.boss
         ? Math.round(b.score * mult() * scoreMult())
-        : Math.round(BRICK_SCORE[b.maxHp] * mult() * scoreMult()); // #10 score stacks
+        : Math.round((b.scoreVal || BRICK_SCORE[b.maxHp]) * mult() * scoreMult()); // #10 score stacks
       score += pts;
       floatText(b.x + b.w / 2, b.y, '+' + pts + (mult() > 1 ? ' ×' + mult() : ''), color);
       burst(b.x + b.w / 2, b.y + b.h / 2, color, 14, 260);
@@ -1800,6 +1919,11 @@
       } else {
         sfx.brick(combo);
       }
+      // #22: an exploding brick detonates before the clear check, so a
+      // chain that finishes the wall clears the level — and if the chain
+      // already cleared it, return here: the every() check below would
+      // otherwise fire onLevelClear a second time (double bonus).
+      if (b.kind === 'explosive' && explodeBrick(b) === 'clear') return 'clear';
       updateHUD();
       if (bricks.every((bb) => !bb.alive)) {
         // #24: on a boss level the Core wakes instead of clearing — the
@@ -2004,6 +2128,37 @@
     sfx.voidSwallow();
   }
 
+  // Block 17 (#21, #23): moving bricks slide and regen bricks count
+  // down — only while playing, never in menus or on the serve (the
+  // harness compares the level-1 layout signature at serve time, and a
+  // brick that slid before the launch would break that determinism
+  // check). A mover bounces at its home ± range, clamped to the walls.
+  // A regen brick returns at full HP when its timer runs out — with a
+  // shimmer, a burst and a counter for the harness — unless the level
+  // already cleared, in which case buildLevel replaced the wall and the
+  // stale brick object is gone with it.
+  function updateBricks(dt) {
+    for (const b of bricks) {
+      if (b.kind === 'moving' && b.alive) {
+        b.x += b.moveDir * MOVER_SPEED * dt;
+        if (b.x <= b.minX) { b.x = b.minX; b.moveDir = 1; }
+        else if (b.x >= b.maxX) { b.x = b.maxX; b.moveDir = -1; }
+      } else if (b.kind === 'regen' && !b.alive && b.respawnIn > 0) {
+        b.respawnIn -= dt;
+        if (b.respawnIn <= 0) {
+          b.respawnIn = 0;
+          b.alive = true;
+          b.hp = b.maxHp;
+          regenCount++;
+          floatText(b.x + b.w / 2, b.y - 6, 'REGENERATED!', KIND_COLORS.regen);
+          burst(b.x + b.w / 2, b.y + b.h / 2, KIND_COLORS.regen, 14, 220);
+          sfx.regen();
+          updateHUD();
+        }
+      }
+    }
+  }
+
   // ---------- Update ----------
   const keys = new Set();
 
@@ -2071,6 +2226,7 @@
       updatePowerups(dt);
       stepBalls(dt);
       updateLasers(dt); // #3: laser bolts fly and hit bricks
+      updateBricks(dt); // Block 17: movers slide, regen bricks count down
       tickWells(dt);
       // #17: telegraph — track how close the nearest ball is to each awake
       // well that can still swallow. First entry into the pull zone flashes
@@ -2259,9 +2415,9 @@
     // Bricks.
     for (const b of bricks) {
       if (!b.alive) continue;
-      // #20 / #24: elite bricks glow violet, the Void Core glows red and
-      // pulses; everything else uses its HP table color.
-      const color = b.boss ? BOSS_COLOR : BRICK_COLORS[b.hp];
+      // Block 17: colour comes from brickColor() — boss red, each new
+      // kind its own neon, everything else its HP table colour.
+      const color = brickColor(b);
       ctx.save();
       ctx.shadowColor = color;
       ctx.shadowBlur = glow(b.boss ? 18 + 8 * Math.sin(t * 5) : 10);
@@ -2294,6 +2450,35 @@
           ctx.fill();
         }
       }
+      // Block 17: special bricks wear their glyph in the middle — ↔
+      // slides, ✸ blows up, ↻ comes back — so the wall reads at a glance.
+      if (b.kind) {
+        ctx.fillStyle = 'rgba(7,3,18,0.85)';
+        ctx.font = '800 13px "Segoe UI", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(KIND_GLYPHS[b.kind], b.x + b.w / 2, b.y + b.h / 2 + 5);
+      }
+    }
+
+    // Block 17 (#23): a regen brick counting down to its return shows
+    // as a faint ghost outline with its glyph and a refill bar, so the
+    // player sees the wall healing instead of bricks popping back.
+    for (const b of bricks) {
+      if (b.alive || b.kind !== 'regen' || b.respawnIn <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha = 0.12 + 0.05 * Math.sin(t * 4);
+      ctx.strokeStyle = KIND_COLORS.regen;
+      ctx.lineWidth = 1.5;
+      rr(b.x, b.y, b.w, b.h, 5);
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = 'rgba(103,232,249,0.55)';
+      ctx.font = '800 13px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(KIND_GLYPHS.regen, b.x + b.w / 2, b.y + b.h / 2 + 5);
+      const frac = 1 - b.respawnIn / REGEN_DELAY;
+      ctx.fillStyle = 'rgba(103,232,249,0.35)';
+      ctx.fillRect(b.x + 3, b.y + b.h - 4, (b.w - 6) * frac, 2);
     }
 
     // #24: top-of-screen boss bar while the Core lives — the player can
@@ -2649,6 +2834,16 @@
       return bricks.filter((b) => b.alive)
         .map((b) => Math.round(b.x) + ':' + Math.round(b.y) + ':' + b.hp).join(',');
     },
+    // Block 17: live counts of the new brick kinds on this level, plus
+    // the run's chain-explosion and regen counters, for the harness.
+    get kinds() {
+      const k = { moving: 0, explosive: 0, regen: 0 };
+      for (const b of bricks) if (b.alive && b.kind) k[b.kind] = (k[b.kind] || 0) + 1;
+      return k;
+    },
+    get chains() { return chainBursts; },
+    get chainKills() { return chainKills; },
+    get regens() { return regenCount; },
   };
 
   let last = performance.now();
