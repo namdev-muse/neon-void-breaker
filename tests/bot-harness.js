@@ -17,7 +17,14 @@ const SRC = fs.readFileSync(GAME, 'utf8');
 // Block 12 test-only patches (in-memory only, never written to game.js):
 // every broken brick drops a capsule, types cycle laser/slow/shield/multi/wide/fire,
 // and capsules home hard to the paddle so catches are deterministic.
-const SRC12 = SRC
+// NVB_REAL_DROPS=1 skips the drop/magnet patches (keeps the 2s regen
+// delay) so the human bot (NVB_HUMAN_BOT=1) measures the real game's
+// difficulty — the 12% drop rate and straight-falling capsules —
+// instead of the harness's guaranteed powerup flood.
+const REAL_DROPS = process.env.NVB_REAL_DROPS === '1';
+const SRC12 = REAL_DROPS ? SRC
+  .replace("const REGEN_DELAY = 20;", "const REGEN_DELAY = 2;")
+  : SRC
   .replace("if (Math.random() >= (chance || POWERUP_DROP_CHANCE)) return;", "")
   .replace("const type = r < 0.20 ? 'multi' : r < 0.36 ? 'wide' : r < 0.52 ? 'laser' : r < 0.64 ? 'slow' : r < 0.76 ? 'shield' : r < 0.88 ? 'fire' : 'bomb';",
     "const type = ['laser','slow','shield','multi','wide','fire','bomb'][(global.__pu = (global.__pu || 0) + 1) % 7];")
@@ -25,10 +32,17 @@ const SRC12 = SRC
   // Block 17 (#23): regen bricks return after 2s in the harness (20s
   // in the real game) so a respawn is observable inside one level.
   .replace("const REGEN_DELAY = 20;", "const REGEN_DELAY = 2;");
-if (SRC12 === SRC || SRC12.indexOf("global.__pu") < 0 || SRC12.indexOf("REGEN_DELAY = 2") < 0) { console.log('PATCH FAILED'); process.exit(2); }
+if (SRC12 === SRC || SRC12.indexOf("REGEN_DELAY = 2") < 0
+  || (!REAL_DROPS && SRC12.indexOf("global.__pu") < 0)) { console.log('PATCH FAILED'); process.exit(2); }
 
 const ATTEMPTS = parseInt(process.argv[2] || '2', 10) || 2;
 const MAX_FRAMES = parseInt(process.argv[3] || '160000', 10) || 160000;
+// Block 18 (#62): NVB_HUMAN_BOT=1 drives the paddle like a human — the
+// target only updates every 8 frames (~133ms reaction), aims ±24px off,
+// and holds still while the ball is rising. The run then prints a
+// difficulty report (levels reached, balls lost) instead of the check
+// suite, so a balance change can be measured before/after.
+const HUMAN = process.env.NVB_HUMAN_BOT === '1';
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -135,6 +149,8 @@ const IDS = ['score', 'best', 'level', 'lives', 'combo', 'power', 'menuOverlay',
   'gameOverTitle', 'gameOverStats', 'nextLevelBtn', 'muteBtn', 'pauseBtn', 'pauseStats',
   'menuScores', 'gameOverScores', 'playBtn', 'resumeBtn', 'restartBtnPause',
   'quitBtnPause', 'againBtn', 'menuBtnOver', 'srStatus', 'seedLine',
+  // Block 18 (#49): the menu's CONTINUE button for a saved run.
+  'continueBtn',
   // Block 16 (#39 how-to, #35/#36/#44 settings, achievements): every id the
   // game reads must exist in the stub or the load throws on addEventListener.
   'howtoOverlay', 'settingsOverlay', 'achOverlay', 'achToast',
@@ -578,6 +594,10 @@ let dropFrames = 0, shieldLivesBefore = 0;
 // runs out. Returns 'clear' | 'over' | 'timeout' | 'menu'.
 function aiPlay(maxFrames) {
   let frames = 0;
+  // Block 18 (#62): human-bot state — the paddle target the sloppy bot
+  // is chasing, a short history of the ball's positions for its landing
+  // prediction, and a correction-rate counter.
+  let humanTarget = null, humanHist = [], humanTick = 0;
   while (frames < maxFrames) {
     if (overlayVisible('menuOverlay')) return 'menu';
     if (overlayVisible('gameOverOverlay')) return 'over';
@@ -585,13 +605,13 @@ function aiPlay(maxFrames) {
     if (overlayVisible('pauseOverlay')) { key('KeyR'); pump(2); frames += 2; continue; }
     if (overlayVisible('draftOverlay')) return 'draft';
     const pw = powerHTML();
-    if (!laserTested && pw.indexOf('LASER') >= 0) {
+    if (!HUMAN && !laserTested && pw.indexOf('LASER') >= 0) {
       laserTested = true;
       const before = obs.laserBolts;
       key('Space', bodyEl); pump(5); frames += 5;
       obs.laserFireOk = obs.laserBolts > before;
     }
-    if (!shieldTested && level() === 1 && pw.indexOf('SHIELD') >= 0 && !dropTest) {
+    if (!HUMAN && !shieldTested && level() === 1 && pw.indexOf('SHIELD') >= 0 && !dropTest) {
       shieldTested = true; dropTest = true; dropFrames = 0;
       shieldLivesBefore = lives();
     }
@@ -609,6 +629,32 @@ function aiPlay(maxFrames) {
         obs.shieldSaveTimeout = true;
         dropTest = false;
       }
+    } else if (HUMAN) {
+      // Block 18 (#62): human-like control — predict where the falling
+      // ball will cross the paddle line from its recent velocity (a
+      // human extrapolates, not chases the past), correct the aim every
+      // 6 frames (~100ms) with ±25px of error, and hold still while the
+      // ball rises. A bot that still wins says the game is too easy; one
+      // that dies on level 2 says the first well + the speed ramp spike
+      // too hard together.
+      if (b) {
+        humanHist.push({ x: b.x, y: b.y });
+        if (humanHist.length > 12) humanHist.shift();
+        humanTick++;
+        if (humanHist.length >= 6 && humanTick % 6 === 0) {
+          const a = humanHist[humanHist.length - 6], c = humanHist[humanHist.length - 1];
+          const vx = (c.x - a.x) / 5, vy = (c.y - a.y) / 5; // px per frame
+          if (vy > 0.5) {
+            const t = (PADDLE_LINE - c.y) / vy; // frames to the paddle line
+            let px = c.x + vx * t;
+            // One wall bounce in the prediction: reflect back into play.
+            if (px < 8) px = 16 - px;
+            else if (px > 712) px = 1424 - px;
+            humanTarget = Math.max(0, Math.min(720, px + (Math.random() * 50 - 25)));
+          }
+        }
+      }
+      if (humanTarget !== null) canvasEl.dispatch('pointermove', { clientX: humanTarget, pointerType: 'touch' });
     } else if (b) {
       canvasEl.dispatch('pointermove', { clientX: b.x, pointerType: 'touch' });
     }
@@ -701,7 +747,7 @@ check('audit: NaN velocity guard present', SRC.includes('Number.isFinite(ball.vx
 
 console.log('== HTML ==');
 const html = fs.readFileSync(HTML, 'utf8');
-check('HTML: version v0.17.0', html.includes('v0.17.0'));
+check('HTML: version v0.18.0', html.includes('v0.18.0'));
 
 console.log('== bot playtest (#45) ==');
 let attemptResults = [];
@@ -766,6 +812,27 @@ for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     resetRunTracking(); // re-baseline before the restart zeroes the score
     key('Enter', bodyEl); pump(3);
   }
+}
+
+// Block 18 (#62): human-bot mode reports difficulty and stops — the
+// full check suite assumes the perfect bot wins every level, so it
+// would fail on a human-like run by design.
+if (HUMAN) {
+  console.log('\n== human-bot difficulty report (#62) ==');
+  console.log('attempts: ' + JSON.stringify(attemptResults));
+  console.log('levels cleared: ' + JSON.stringify(obs.levelsCleared) + ' (max level reached ' + obs.maxLevel + ')');
+  console.log('final score: ' + obs.finalScore + ' · max combo ×' + obs.maxCombo);
+  console.log('powerups caught: ' + obs.powerupsCaught + ' · swallows: ' + obs.swallows
+    + ' · VOID PULL warnings: ' + obs.pullWarns);
+  console.log('paddle crossings: ' + obs.crossings + ' · bounces: ' + obs.bounces
+    + ' · lost despite tracking: ' + obs.lostDespiteTracking
+    + ' · unresolved: ' + obs.unresolvedCrossings + ' · dropped: ' + obs.droppedCrossings);
+  console.log('frames simulated: ' + obs.frames);
+  console.log('\n' + pass + ' PASS, ' + fail + ' FAIL');
+  if (failures.length) console.log('failures: ' + failures.join(' | '));
+  for (const id of intervals) clearInterval(id);
+  for (const id of timeouts) clearTimeout(id);
+  process.exit(fail ? 1 : 0);
 }
 
 console.log('== Block 11 powerups (#3 laser, #4 slow-mo, #5 shield) ==');
@@ -985,6 +1052,121 @@ check('music: boss fight holds intensity at ×3 or higher',
 check('bricks: kinds + counters exposed via __nvbMeta',
   SRC.includes('get kinds()') && SRC.includes('get chains()') && SRC.includes('get regens()'));
 
+console.log('== Block 18 (#49 save/restore, #62 human-bot balance) ==');
+check('save: __nvbSave exposed (has/save/restore/clear/read/refresh)',
+  !!global.window.__nvbSave && typeof global.window.__nvbSave.has === 'function'
+  && typeof global.window.__nvbSave.save === 'function'
+  && typeof global.window.__nvbSave.restore === 'function'
+  && typeof global.window.__nvbSave.clear === 'function'
+  && typeof global.window.__nvbSave.read === 'function'
+  && typeof global.window.__nvbSave.refresh === 'function');
+check('save: saveRun + restoreSave + versioned key + beforeunload in source',
+  SRC.includes('function saveRun') && SRC.includes('function restoreSave')
+  && SRC.includes("SAVE_KEY = 'nvb-save'") && SRC.includes('SAVE_VERSION = 1')
+  && SRC.includes("beforeunload"));
+check('save: fresh run clears the save, game over clears the save (source)',
+  SRC.includes('clearSave(); // #49: a fresh run abandons any saved run')
+  && SRC.includes('clearSave(); // #49: the run is over'));
+check('save: pause checkpoints, fresh level checkpoints, 5s autosave (source)',
+  SRC.includes('saveRun(); // #49: pausing checkpoints the run')
+  && SRC.includes('saveRun(); // #49: a fresh level is a clean restore point')
+  && SRC.includes('if (saveTimer >= 5)'));
+check('save: CONTINUE button in the menu HTML',
+  html.includes('id="continueBtn"') && html.includes('CONTINUE'));
+check('save: CONTINUE button hides by class (style rule present)',
+  fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8').includes('#continueBtn.hidden'));
+check('balance: speed ramp saturates over ~2 levels, not inside level 1',
+  SRC.includes('Math.min(120, bricksBrokenRun * 1)')
+  && !SRC.includes('Math.min(120, bricksBrokenRun * 2)'));
+check('balance: level 2 first well bends gently (0.6)',
+  SRC.includes("{ x: 200, y: 340, bend: 0.6 }"));
+// Runtime save/restore: start a run, play until some bricks are broken,
+// checkpoint, quit to the menu, and CONTINUE back into the same run.
+let saveOk = false, savedScore = 0, savedLevel = 0, savedAlive = 0, savedJson = '';
+if (overlayVisible('menuOverlay')) {
+  // Re-baseline BEFORE the restart keypress (same reason as the main
+  // loop): startRun zeroes the score, which the NaN detector would
+  // otherwise read as a bogus "score decreased" event.
+  resetRunTracking();
+  elementsById.playBtn.click(); pump(3);
+  let r18 = aiPlay(2500);
+  let g18 = 0;
+  while ((r18 === 'clear' || r18 === 'draft') && g18++ < 12) {
+    if (r18 === 'clear') { if (!advanceLevel()) break; }
+    else key('Digit2');
+    pump(10);
+    r18 = aiPlay(2500);
+  }
+  if (!overlayVisible('menuOverlay') && !overlayVisible('gameOverOverlay')
+    && !overlayVisible('draftOverlay') && !overlayVisible('levelOverlay')) {
+    saveOk = global.window.__nvbSave.save();
+    const s18 = global.window.__nvbSave.read();
+    savedScore = score(); savedLevel = level();
+    savedAlive = s18 ? s18.bricks.filter((b) => b.alive).length : -1;
+    savedJson = global.localStorage.getItem('nvb-save') || '';
+  }
+}
+check('save: checkpoint writes a v1 save to localStorage',
+  saveOk === true && savedJson.indexOf('"v":1') >= 0 && savedScore > 0,
+  'score=' + savedScore + ' level=' + savedLevel + ' alive=' + savedAlive);
+check('save: CONTINUE button shows the saved level + score',
+  !elementsById.continueBtn.classList.contains('hidden')
+  && (elementsById.continueBtn.textContent || '').indexOf('LEVEL ' + savedLevel) >= 0,
+  'label=' + JSON.stringify(elementsById.continueBtn.textContent));
+// A corrupt save must be rejected (button hides) and the good save must
+// come back when it is written again — the menu never offers a bad run.
+global.localStorage.setItem('nvb-save', 'not-json{{{');
+global.window.__nvbSave.refresh();
+check('save: a corrupt save is rejected and hides CONTINUE',
+  global.window.__nvbSave.has() === false
+  && elementsById.continueBtn.classList.contains('hidden'));
+global.localStorage.setItem('nvb-save', savedJson);
+global.window.__nvbSave.refresh();
+check('save: the good save is recognised again after the corrupt one',
+  global.window.__nvbSave.has() === true
+  && !elementsById.continueBtn.classList.contains('hidden'));
+// Quit to the menu (P pauses, Q quits), then CONTINUE back in. The quit
+// zeroes the score on purpose — re-baseline AFTER the pause pumps and
+// immediately before the Q, because observe() re-syncs its prevScore on
+// every pumped frame (a reset before the pumps is already stale by Q).
+key('KeyP'); pump(2);
+const paused18 = overlayVisible('pauseOverlay');
+if (paused18) { resetRunTracking(); key('KeyQ'); pump(2); }
+const onMenu18 = overlayVisible('menuOverlay') && score() === 0;
+elementsById.continueBtn.click(); pump(5);
+const meta18 = global.window.__nvbMeta;
+const restoredAlive = meta18 ? meta18.levelSig.split(',').filter(Boolean).length : -1;
+check('save: P pauses, Q quits to the menu', paused18 && onMenu18);
+check('save: CONTINUE restores the run (score/level/bricks)',
+  !overlayVisible('menuOverlay') && score() === savedScore && level() === savedLevel
+  && restoredAlive === savedAlive,
+  'score=' + score() + '/' + savedScore + ' level=' + level() + '/' + savedLevel
+  + ' alive=' + restoredAlive + '/' + savedAlive);
+let serving18 = false;
+for (let i = 0; i < 10; i++) { pump(1); serving18 = servingNow(); }
+check('save: restored run is serving (ball glued to the paddle)', serving18 === true,
+  'ball=' + JSON.stringify(ballPos()));
+// The restored run must actually play: drive it briefly, then start a
+// fresh run and confirm the save is gone (PLAY abandons the old run).
+let r18b = aiPlay(2500);
+let g18b = 0;
+while ((r18b === 'clear' || r18b === 'draft') && g18b++ < 12) {
+  if (r18b === 'clear') { if (!advanceLevel()) break; } else key('Digit2');
+  pump(10);
+  r18b = aiPlay(2500);
+}
+check('save: restored run plays on (no new tunnel/NaN events)',
+  obs.tunnelBugs.length === 0 && obs.nanEvents.length === 0,
+  'tunnel=' + obs.tunnelBugs.length + ' nan=' + obs.nanEvents.length
+  + (obs.nanEvents.length ? ' (' + obs.nanEvents.slice(0, 2).join(' | ') + ')' : ''));
+key('KeyP'); pump(2);
+if (overlayVisible('pauseOverlay')) { resetRunTracking(); elementsById.restartBtnPause.click(); pump(3); }
+else if (overlayVisible('gameOverOverlay')) { resetRunTracking(); elementsById.againBtn.click(); pump(3); }
+else if (overlayVisible('menuOverlay')) { elementsById.playBtn.click(); pump(3); }
+check('save: starting a fresh run clears the save',
+  global.window.__nvbSave.has() === false
+  && elementsById.continueBtn.classList.contains('hidden'));
+
 console.log('\n== coverage report ==');
 console.log('attempts: ' + JSON.stringify(attemptResults));
 console.log('levels cleared: ' + JSON.stringify(obs.levelsCleared) + ' (max level reached ' + obs.maxLevel + ')');
@@ -1014,6 +1196,8 @@ console.log('block 16: achievements unlocked=' + (global.window.__nvbAch && glob
 console.log('block 17: kinds seen=' + JSON.stringify(obs.kindsSeen)
   + ' · moverMoved=' + obs.moverMoved + ' · chains=' + obs.chains
   + ' chainKills=' + obs.chainKills + ' · regens=' + obs.regens);
+console.log('block 18: save=' + JSON.stringify(global.window.__nvbSave && global.window.__nvbSave.read() ? { level: global.window.__nvbSave.read().level, score: global.window.__nvbSave.read().score } : null)
+  + ' · continueBtn=' + JSON.stringify(elementsById.continueBtn.textContent));
 console.log('brick signatures: boot=' + JSON.stringify(obs.bootSig)
   + ' attempts=' + JSON.stringify(obs.brickSigs));
 console.log('paddle crossings: ' + obs.crossings + ' · bounces: ' + obs.bounces
